@@ -98,6 +98,11 @@ try {
                         $message .= "Duration: $durée days\n\n";
                         $message .= "Please log in to BookMate to review the request.\n\nBest regards,\nBookMate Team";
                         $headers = "From: no-reply@bookmate.com\r\n";
+
+
+                        $stmt = $conn->prepare("INSERT INTO requests (requester_id, book_id, type, status, datedeb, durée, reasonText) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                        $stmt->bind_param("iisssis", $requester_id, $book_id, $type, $status, $datedeb, $durée, $reasonText);
+
                         
                         if (mail($owner_email, $subject, $message, $headers)) {
                             echo json_encode(["success" => "Swap request submitted and email sent"]);
