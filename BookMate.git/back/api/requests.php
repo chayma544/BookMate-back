@@ -75,29 +75,44 @@ try {
 
             case 'POST':
                 $data = json_decode(file_get_contents('php://input'), true);
-                if (!isset($data['book_id']) || !isset($data['reason']) || !isset($data['datedeb']) || !isset($data['durée']) || !isset($data['type'])) {
-                    http_response_code(400);
-                    echo json_encode(['error' => 'Missing required fields']);
-                    break;
+
+                $requester_id = isset($data['requester_id']) ? intval($data['requester_id']) : 0;
+                $book_id = isset($data['book_id']) ? intval($data['book_id']) : 0;
+                $type = isset($data['type']) ? $conn->real_escape_string($data['type']) : '';
+                $status = isset($data['status']) ? $conn->real_escape_string($data['status']) : '';
+                $datedeb = isset($data['datedeb']) ? $conn->real_escape_string($data['datedeb']) : '';
+                $durée = isset($data['durée']) ? intval($data['durée']) : 0;
+                $reasonText = isset($data['reasonText']) ? $conn->real_escape_string($data['reasonText']) : '';
+                $owner_email = isset($data['owner_email']) ? $conn->real_escape_string($data['owner_email']) : '';
+                if ($requester_id > 0 && $book_id > 0 && $type && $status && $datedeb && $durée > 0 && $owner_email) {
+                    // Insert the swap request into the database
+                    $stmt = $conn->prepare("INSERT INTO requests (requester_id, book_id, type, status, datedeb, durée, reasonText) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param("iisssis", $requester_id, $book_id, $type, $status, $datedeb, $durée, $reasonText);
+
+                    if ($stmt->execute()) {
+                        // Send email to the owner
+                        $subject = "New Swap Request for Your Book";
+                        $message = "Hello,\n\nA user has requested to swap your book (ID: $book_id).\n\n";
+                        $message .= "Reason: $reasonText\n";
+                        $message .= "Start Date: $datedeb\n";
+                        $message .= "Duration: $durée days\n\n";
+                        $message .= "Please log in to BookMate to review the request.\n\nBest regards,\nBookMate Team";
+                        $headers = "From: no-reply@bookmate.com\r\n";
+                        
+                        if (mail($owner_email, $subject, $message, $headers)) {
+                            echo json_encode(["success" => "Swap request submitted and email sent"]);
+                        } else {
+                            echo json_encode(["success" => "Swap request submitted, but failed to send email"]);
+                        }
+                    } else {
+                        echo json_encode(["error" => "Failed to submit swap request"]);
+                    }
+
+                    $stmt->close();
+                } else {
+                    echo json_encode(["error" => "Invalid or missing data"]);
                 }
-        
-                $book_id = (int)$data['book_id'];
-                $reason = $data['reason'];
-                $datedeb = $data['datedeb'];
-                $durée = (int)$data['durée'];
-                $type = strtoupper($data['type']); // Convert to uppercase to match enum ('BORROW', 'EXCHANGE')
-                $requester_id = 1; // Replace with actual logged-in user ID (e.g., from session or token)
-        
-                $stmt = $pdo->prepare("INSERT INTO requests (book_id, requester_id, reasonText, datedeb, durée, type, status) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')");
-                $stmt->execute([$book_id, $requester_id, $reason, $datedeb, $durée, $type]);
-        
-                echo json_encode(['message' => 'Request submitted successfully']);
-                break;
-        
-            default:
-                http_response_code(405);
-                echo json_encode(['error' => 'Method not allowed']);
-                break;
+                $conn->close();
             
         /*case 'POST':
             // Parse the incoming JSON data
