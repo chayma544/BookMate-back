@@ -64,18 +64,18 @@ if ($requiresAuth) {
     $rateLimitKey = 'book_api_'.($current_user_id ?? 'guest');
     //Increments a counter in PHP's memory cache (APCu)
     //Why? Tracks requests per user/IP efficiently >>> Allows 100 requests/minute per user (adjustable)
-    $rateLimitCount = apcu_inc($rateLimitKey);
     
-
-    // this requires testing 101 times with a for loop !!!!!!!!!!!!!!!!!!!!
-    if ($rateLimitCount === false) {
-        apcu_store($rateLimitKey, 1, 60); // 1 minute window
-    } elseif ($rateLimitCount > 100) { // Limit to 100 requests/minute
-        http_response_code(429);
-        echo json_encode(['error' => 'Too many requests']);
-        exit();
+    if (!apcu_exists($rateLimitKey)) {
+        // Uses apcu_add() instead of apcu_store() to prevent overwriting concurrent increments
+        apcu_add($rateLimitKey, 1, 60); // Initialize if not exists
+    } else {
+        $count = apcu_inc($rateLimitKey); // Increment if exists
+        if ($count > 100) {
+            http_response_code(429);
+            echo json_encode(['error' => 'Too many requests']);
+            exit();
+        }
     }
-
     
 }
 
