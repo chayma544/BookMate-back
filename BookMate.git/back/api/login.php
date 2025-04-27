@@ -36,22 +36,13 @@ if (!$user || !password_verify($password, $user['password'])) {
 
 // Login successful
 $_SESSION['user_id'] = $user['user_id'];
-$_SESSION['email'] = $user['email'];
-$_SESSION['firstName'] = $user['FirstName'];
-$_SESSION['lastName'] = $user['LastName'];
+
+// Set a cookie with the user_id for session persistence (optional, if required)
+setcookie('user_id', $user['user_id'], time() + 3600, "/"); // 1-hour expiration for the cookie
 
 http_response_code(200);
 echo json_encode([
     'message' => 'Login successful',
-    'user' => [
-        'user_id' => $user['user_id'],
-        'firstName' => $user['FirstName'],
-        'lastName' => $user['LastName'],
-        'email' => $user['email'],
-        'address' => $user['address'],
-        'age' => $user['age'],
-        'imageURL' => $user['imageURL'],
-        'user_swap_score' => $user['user_swap_score']
-    ]
+    'user_id' => $user['user_id']
 ]);
 ?>
