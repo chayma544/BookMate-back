@@ -1,20 +1,18 @@
 <?php 
 
+// Start session at the beginning before any output
+session_start();
 
 define('ENVIRONMENT', getenv('ENVIRONMENT') ?: 'production');
-header("Access-Control-Allow-Origin: *"); 
-header("Content-Type: application/json");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
-header("Access-Control-Allow-Headers: Content-Type");
-
 header("Access-Control-Allow-Origin: https://localhost:4200"); // SPECIFIC domain
+header("Content-Type: application/json");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Access-Control-Allow-Credentials: true");
 header("Access-Control-Max-Age: 86400"); // Cache preflight for 24h --> 86400 minutes
 
-require_once __DIR__ . '../config/db.php';
-require_once __DIR__ . '../config/jwt.php'; // Include JWT configuration
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/jwt.php'; // Include JWT configuration
 
 
 // input sanitization
@@ -48,9 +46,9 @@ $requiresAuth = $method !== 'GET'; // Only require auth for POST, PUT, DELETE
 if ($requiresAuth) {
     //Extracts the JWT from the Authorization: Bearer <token> header.
     //Why? Standard way to pass tokens in HTTP requests
-    $token = getBearerToken();
+   // $token = getBearerToken();
     //Verifies the token's signature using the secret key from jwt.php.
-    $decoded = validateJWT($token);
+   // $decoded = validateJWT($token);
     
     if (!$decoded) {
         http_response_code(401);
@@ -61,22 +59,33 @@ if ($requiresAuth) {
     // Store user ID from token for later use
     $current_user_id = $decoded->sub;
 
+    // Session-based rate limiting
     $rateLimitKey = 'book_api_'.($current_user_id ?? 'guest');
-    //Increments a counter in PHP's memory cache (APCu)
-    //Why? Tracks requests per user/IP efficiently >>> Allows 100 requests/minute per user (adjustable)
+    $currentTime = time();
     
-    if (!apcu_exists($rateLimitKey)) {
-        // Uses apcu_add() instead of apcu_store() to prevent overwriting concurrent increments
-        apcu_add($rateLimitKey, 1, 60); // Initialize if not exists
+    // Initialize or clean up rate limit data if needed
+    if (!isset($_SESSION['rate_limits'][$rateLimitKey]) || 
+        $_SESSION['rate_limits'][$rateLimitKey]['reset_time'] < $currentTime) {
+        
+        // Set up new rate limit window
+        $_SESSION['rate_limits'][$rateLimitKey] = [
+            'count' => 1,
+            'reset_time' => $currentTime + 60 // 60 seconds window
+        ];
     } else {
-        $count = apcu_inc($rateLimitKey); // Increment if exists
-        if ($count > 100) {
+        // Increment request count
+        $_SESSION['rate_limits'][$rateLimitKey]['count']++;
+        
+        // Check if rate limit exceeded
+        if ($_SESSION['rate_limits'][$rateLimitKey]['count'] > 100) {
             http_response_code(429);
-            echo json_encode(['error' => 'Too many requests']);
+            echo json_encode([
+                'error' => 'Too many requests',
+                'retry_after' => $_SESSION['rate_limits'][$rateLimitKey]['reset_time'] - $currentTime
+            ]);
             exit();
         }
     }
-    
 }
 
 
@@ -126,7 +135,7 @@ try {
                     //json_encode() pour convertir le tableau associatif en format json
                 } else {
                     http_response_code(204);
-                    //On envoie un code d’erreur HTTP 204 (book Not Found)
+                    //On envoie un code d'erreur HTTP 204 (book Not Found)
                     echo json_encode(['error' => 'Book not found']);
                     //Cela permet au client de comprendre que la requête a échoué.
                 }
@@ -195,7 +204,7 @@ try {
 
         case 'POST':
             // Parse the incoming JSON data
-            $requestData =sanitizeInput( json_decode(file_get_contents("php://input"), true));
+            $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
             //json_decode --> yrodha en tableau associative!!! lezm trodha akeka bch te5dem fl php
             
             // Validate required fields for adding a book
@@ -255,7 +264,7 @@ try {
                 $requestData['release_date'] ?? null,
                 $requestData['status'] ?? 'good',
                 $requestData['availability'] ?? 'available',
-                $requestData['user_id'] 
+                $user_id  // Changed from $requestData['user_id'] to use the JWT token user
             ]);
         
             // Return success response
@@ -274,7 +283,7 @@ try {
 
         case 'PUT':
 
-            $requestData = sanitizeInput(json_decode(file_get_contents("php://input")), true);
+            $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
             
             // Verify book ID exists
             if (empty($requestData['book_id'])) {
@@ -325,8 +334,8 @@ try {
                 'genre',
                 'release_date', 
                 'status', 
-                'availability',
-                'user_id'
+                'availability'
+                // Removed user_id from allowed updates for security
             ];
         
             foreach ($allowedFields as $field) {
@@ -385,7 +394,7 @@ try {
                 http_response_code(403);
                 echo json_encode(['error' => 'You can only delete your own books']);
                 break;
-    }
+            }
             $bookId = $_GET['id'];
             
             // Option 1: Soft delete (update availability)
@@ -403,9 +412,9 @@ try {
             }
             break;
 
-            default:
-                http_response_code(405);
-                echo json_encode(['error' => 'Method not allowed']);
+        default:
+            http_response_code(405);
+            echo json_encode(['error' => 'Method not allowed']);
     }
 
 } catch (PDOException $e) {

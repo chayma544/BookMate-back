@@ -1,72 +1,86 @@
 <?php
-require_once '../config/database.php';
+require '../config/db.php';
 
-$data = json_decode(file_get_contents("php://input"));
-
-$requiredFields = ['firstName', 'lastName', 'age', 'address', 'password'];
-$optionalFields = ['email'];
-
-// Check required fields
-foreach ($requiredFields as $field) {
-    if (empty($data->$field)) {
-        http_response_code(400);
-        echo json_encode(["message" => "Missing required field: $field"]);
-        exit;
-    }
+// Only allow POST requests
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['error' => 'Method not allowed']);
+    exit();
 }
 
-// Prepare user data
-$userData = [
-    'first_name' => $data->firstName,
-    'last_name' => $data->lastName,
-    'age' => $data->age,
-    'address' => $data->address,
-    'password' => password_hash($data->password, PASSWORD_BCRYPT),
-    'user_swap_score' => 0, // Default value
-    'email' => $data->email ?? null
-];
+// Get JSON input
+$input = json_decode(file_get_contents('php://input'), true);
 
-// Check if email exists (only if provided)
-if ($userData['email']) {
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
-    $stmt->execute([$userData['email']]);
-    
-    if ($stmt->rowCount() > 0) {
-        http_response_code(400);
-        echo json_encode(["message" => "Email already exists"]);
-        exit;
-    }
+// Validate input
+if (empty($input['firstName']) || empty($input['lastName']) || empty($input['email']) || 
+    empty($input['password']) || empty($input['address']) || empty($input['age'])) {
+    http_response_code(400);
+    echo json_encode(['error' => 'All fields are required']);
+    exit();
 }
+
+// Extract data
+$firstName = trim($input['firstName']);
+$lastName = trim($input['lastName']);
+$email = trim($input['email']);
+$password = $input['password'];
+$address = trim($input['address']);
+$age = intval($input['age']);
+
+// Validate email
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid email format']);
+    exit();
+}
+
+// Check if email exists
+$stmt = $pdo->prepare("SELECT * FROM user WHERE email = ?");
+$stmt->execute([$email]);
+if ($stmt->rowCount() > 0) {
+    http_response_code(409);
+    echo json_encode(['error' => 'Email already exists']);
+    exit();
+}
+
+// Validate password
+if (strlen($password) < 8) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Password must be at least 8 characters']);
+    exit();
+}
+
+// Validate age
+if ($age < 18) {
+    http_response_code(400);
+    echo json_encode(['error' => 'You must be at least 18 years old']);
+    exit();
+}
+
+// Hash password
+$hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+$imageURL = 'default_profile.jpg'; // Default profile image
 
 // Insert user
-$columns = implode(', ', array_keys($userData));
-$placeholders = implode(', ', array_fill(0, count($userData), '?'));
-$values = array_values($userData);
-
-$stmt = $pdo->prepare("INSERT INTO users ($columns) VALUES ($placeholders)");
-if ($stmt->execute($values)) {
-    $userId = $pdo->lastInsertId();
+try {
+    $stmt = $pdo->prepare("INSERT INTO user (FirstName, LastName, age, address, user_swap_score, email, password, imageURL) 
+                          VALUES (?, ?, ?, ?, 0, ?, ?, ?)");
+    $stmt->execute([$firstName, $lastName, $age, $address, $email, $hashedPassword, $imageURL]);
     
-    // Get the newly created user
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
-    $stmt->execute([$userId]);
-    $user = $stmt->fetch();
+    $userId = $pdo->lastInsertId();
     
     http_response_code(201);
     echo json_encode([
-        "message" => "User registered successfully",
-        "user" => [
-            "user_id" => $user['id'],
-            "firstName" => $user['first_name'],
-            "lastName" => $user['last_name'],
-            "age" => $user['age'],
-            "address" => $user['address'],
-            "user_swap_score" => $user['user_swap_score'],
-            "email" => $user['email']
+        'message' => 'Registration successful',
+        'user' => [
+            'user_id' => $userId,
+            'firstName' => $firstName,
+            'lastName' => $lastName,
+            'email' => $email
         ]
     ]);
-} else {
+} catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(["message" => "Registration failed"]);
+    echo json_encode(['error' => 'Registration failed']);
 }
 ?>
