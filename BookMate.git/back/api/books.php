@@ -1,21 +1,27 @@
-<?php 
+<?php
 
-// Start session at the beginning before any output
+// Start session to track logged-in users
 session_start();
 
+// Configuration
 define('ENVIRONMENT', getenv('ENVIRONMENT') ?: 'production');
-header("Access-Control-Allow-Origin: https://localhost:4200"); // SPECIFIC domain
+define('UPLOAD_DIR', __DIR__ . '/../uploads/');
+define('MAX_FILE_SIZE', 2 * 1024 * 1024); // 2MB
+
+// Set CORS headers for Angular frontend
+header("Access-Control-Allow-Origin: https://localhost:4200");
 header("Content-Type: application/json");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Access-Control-Allow-Credentials: true");
-header("Access-Control-Max-Age: 86400"); // Cache preflight for 24h --> 86400 minutes
+header("Access-Control-Max-Age: 86400");
 
-require_once __DIR__ . '/../config/database.php';
-require_once __DIR__ . '/../config/jwt.php'; // Include JWT configuration
+// Database connection
+require_once __DIR__ . '/../config/db.php';
 
-
-// input sanitization
+/**
+ * Sanitize input data to prevent XSS attacks
+ */
 function sanitizeInput($data) {
     if (is_array($data)) {
         return array_map('sanitizeInput', $data);
@@ -23,60 +29,45 @@ function sanitizeInput($data) {
     return htmlspecialchars(strip_tags(trim($data)), ENT_QUOTES, 'UTF-8');
 }
 
-// Handle preflight requests here's an example:
-
-    //1.A frontend app (example.com) is trying to call an API hosted at (api.example.com).
-    //2.The browser sends an OPTIONS request first to verify permissions.
-    //3.This PHP code intercepts the request and allows it by returning a 200 status.
-    //4.If the preflight request is successful, the browser proceeds with the actual request (e.g., POST, GET).
-
-
-// Handle preflight requests
+// Handle preflight OPTIONS requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
 
-
-// JWT Authentication Check (for all methods except GET)
-// added after auth
+/**
+ * Authentication Check
+ * 
+ * For all non-GET requests, verify user is logged in
+ */
 $method = $_SERVER['REQUEST_METHOD'];
-$requiresAuth = $method !== 'GET'; // Only require auth for POST, PUT, DELETE
+$requiresAuth = $method !== 'GET'; // Only GET requests are public
 
 if ($requiresAuth) {
-    //Extracts the JWT from the Authorization: Bearer <token> header.
-    //Why? Standard way to pass tokens in HTTP requests
-   // $token = getBearerToken();
-    //Verifies the token's signature using the secret key from jwt.php.
-   // $decoded = validateJWT($token);
-    
-    if (!$decoded) {
+    if (!isset($_SESSION['user_id'])) {
         http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized - Invalid or missing token']);
+        echo json_encode(['error' => 'Unauthorized - Please log in']);
         exit();
     }
     
-    // Store user ID from token for later use
-    $current_user_id = $decoded->sub;
+    $current_user_id = $_SESSION['user_id'];
 
-    // Session-based rate limiting
-    $rateLimitKey = 'book_api_'.($current_user_id ?? 'guest');
+    /**
+     * Rate Limiting (100 requests per minute per user)
+     */
+    $rateLimitKey = 'book_api_'.$current_user_id;
     $currentTime = time();
     
-    // Initialize or clean up rate limit data if needed
     if (!isset($_SESSION['rate_limits'][$rateLimitKey]) || 
         $_SESSION['rate_limits'][$rateLimitKey]['reset_time'] < $currentTime) {
         
-        // Set up new rate limit window
         $_SESSION['rate_limits'][$rateLimitKey] = [
             'count' => 1,
-            'reset_time' => $currentTime + 60 // 60 seconds window
+            'reset_time' => $currentTime + 60
         ];
     } else {
-        // Increment request count
         $_SESSION['rate_limits'][$rateLimitKey]['count']++;
         
-        // Check if rate limit exceeded
         if ($_SESSION['rate_limits'][$rateLimitKey]['count'] > 100) {
             http_response_code(429);
             echo json_encode([
@@ -88,74 +79,57 @@ if ($requiresAuth) {
     }
 }
 
+/**
+ * Image Request Handler
+ */
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['image'])) {
+    $imagePath = realpath(UPLOAD_DIR . sanitizeInput($_GET['image']));
+    
+    // Security check
+    if (strpos($imagePath, realpath(UPLOAD_DIR)) !== 0) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Forbidden']);
+        exit();
+    }
+    
+    if (file_exists($imagePath)) {
+        $mimeType = mime_content_type($imagePath);
+        header('Content-Type: ' . $mimeType);
+        readfile($imagePath);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Image not found']);
+    }
+    exit();
+}
 
-
+/**
+ * Main API Endpoint Handler
+ */
 try {
     switch ($method) {
         case 'GET':
-            //methode 1
-            // Get all books
-            //$stmt = $pdo->query("SELECT * FROM Book");
-            //$books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            //echo json_encode($books);
-            //break;
-
-            //method 2
+            // Get single book by ID
             if (isset($_GET['id'])) {
-                // Get single book by ID
-                // $_GET stocke les parametres de l'URL dans un tableau associatif(the part after the ?)
-                //$_GET = [
-                    //  "search" => "harry",
-                    // "genre" => "fantasy"
-                //];                
-                $stmt = $pdo->prepare("SELECT * FROM livre WHERE `book_id` = ?");//this means pdo is already an object of the PDO class from db.php
-                //This prepares the SQL query but does not execute it yet.
-                //$object->method();  ==> Call a method of an object
-                $stmt->execute([$_GET['id']]);//This does two things: 1)Binds the value ($_GET['id']) to the ? placeholder.
-                                                                    //2) Executes the query securely, preventing SQL injection.
+                $stmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
+                $stmt->execute([$_GET['id']]);
                 $book = $stmt->fetch(PDO::FETCH_ASSOC);
-                //$stmt is an object that holds the prepared SQL query.
-                //The structure of the query never changes, only the values do.
-
-
-                //fetch() gets one row at a time.
-
-
-                //PDO::FETCH_ASSOC ensures the result is an associative array (["column_name" => value]) else returns false
-
-                //The :: operator is used in four main cases:
-
-                //1-echo MathHelper::add(5, 10);-->access methods
-                //2-echo Config::SITE_NAME; -->SITE_NAME is a variable containing a value(output : the value of this variable)
-                //3-return parent::makeSound()-->calling parent methods
-                //4-$object->method(); VS ClassName::method();  ===>PDO is a classname(php data objects)
-
+                
                 if ($book) {
+                    if ($book['image_path']) {
+                        $book['image_url'] = "/api/books?image=" . basename($book['image_path']);
+                    }
                     echo json_encode($book);
-                    //json_encode() pour convertir le tableau associatif en format json
                 } else {
-                    http_response_code(204);
-                    //On envoie un code d'erreur HTTP 204 (book Not Found)
+                    http_response_code(404);
                     echo json_encode(['error' => 'Book not found']);
-                    //Cela permet au client de comprendre que la requête a échoué.
                 }
             } 
-            // Search books with filters
+            // Search books
             elseif (isset($_GET['title']) || isset($_GET['genre']) || isset($_GET['author'])) {
-
-
-                //permet d'éviter les erreurs et de gérer le cas où un paramètre n'est pas fourni
-                
-
                 $title = isset($_GET['title']) ? "%{$_GET['title']}%" : "%";
-                //commence ou se termine par le titre IF WE DON'T SPECIFY WE GET ALL THE TITLES
                 $genre = isset($_GET['genre']) ? $_GET['genre'] : "%";
-                //commence par le genre
                 $author = isset($_GET['author']) ? "%{$_GET['author']}%" : "%";
-                //se termine par le nom de l'auteur
-
-
-
                 
                 $stmt = $pdo->prepare("
                     SELECT * FROM livre 
@@ -164,68 +138,61 @@ try {
                     AND availability = 'available')
                 ");
                 
-                //the prepared sql query is in $stmt
-
-
-                //form of an associative array
-
                 $stmt->execute([
                     ':title' => $title,
                     ':author' => $author,
                     ':genre' => $genre
                 ]);
-                // :search, :author, and :genre are placeholders in the SQL query.
-
-                //$search, $author, and $genre are the actual values we pass into the query.
-
-                //execute([...]) binds the values to the placeholders and runs the query.
-
-                //this executes the sql query
-
-
+                
                 $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                //gets all the matching rows from the database
+                
+                foreach ($books as &$book) {
+                    if (!empty($book['image_path'])) {
+                        $book['image_url'] = "/api/books?image=" . basename($book['image_path']);
+                    }
+                }
+                
                 echo json_encode($books);
-                //y5arajlekk les livres trouvés en format json
-            }
-            // Get all available books
-            //if the user didn't specify anything
+            } 
+            // Get all books
             else {
                 $stmt = $pdo->query("SELECT * FROM livre WHERE availability = 'available'");
                 $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                
+                foreach ($books as &$book) {
+                    if (!empty($book['image_path'])) {
+                        $book['image_url'] = "/api/books?image=" . basename($book['image_path']);
+                    }
+                }
+                
                 echo json_encode($books);
             }
             break;
-            //query() and prepare() difference ---> query() selects and execute toul
-
-
             
-        //made changes for auth on POST / PUT & DELETE
-
         case 'POST':
-            // Parse the incoming JSON data
-            $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
-            //json_decode --> yrodha en tableau associative!!! lezm trodha akeka bch te5dem fl php
-            
-            // Validate required fields for adding a book
+            // Handle both JSON and form-data requests
+            if (strpos($_SERVER['CONTENT_TYPE'], 'application/json') !== false) {
+                $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
+                $imageData = null;
+            } else {
+                $requestData = sanitizeInput($_POST);
+                $imageData = $_FILES['image'] ?? null;
+            }
+
+            // Validate required fields
             if (empty($requestData['title']) || empty($requestData['author_name'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Title and author name are required']);
                 break;
             }
-            
-            
 
-            // this is the old method : $user_id = $requestData['user_id'];
-            $user_id = $current_user_id; // From JWT token
+            $user_id = $current_user_id;
             $title = $requestData['title'];
             $author_name = $requestData['author_name'];
 
             // Check if user exists
             $userCheck = $pdo->prepare("SELECT 1 FROM user WHERE user_id = ?");
             $userCheck->execute([$user_id]);
-            //=== :type+value
-            //== :value
             
             if ($userCheck->rowCount() === 0) {
                 http_response_code(404);
@@ -247,15 +214,52 @@ try {
                 echo json_encode(['error' => 'This user already has a book with the same title and author']);
                 break;
             }
-            
-        
-            // Insert new book into database
+
+            // Handle image upload
+            $imagePath = null;
+            if ($imageData && $imageData['error'] === UPLOAD_ERR_OK) {
+                $allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mimeType = finfo_file($finfo, $imageData['tmp_name']);
+                finfo_close($finfo);
+                
+                if (!in_array($mimeType, $allowedTypes)) {
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Only JPG, PNG, and GIF images are allowed']);
+                    break;
+                }
+                
+                if ($imageData['size'] > MAX_FILE_SIZE) {
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Image size exceeds 2MB limit']);
+                    break;
+                }
+                
+                if (!file_exists(UPLOAD_DIR)) {
+                    mkdir(UPLOAD_DIR, 0755, true);
+                }
+                
+                $extension = pathinfo($imageData['name'], PATHINFO_EXTENSION);
+                $filename = uniqid('book_', true) . '.' . $extension;
+                $destination = UPLOAD_DIR . $filename;
+                
+                if (move_uploaded_file($imageData['tmp_name'], $destination)) {
+                    $imagePath = 'uploads/' . $filename;
+                } else {
+                    error_log("Failed to move uploaded file");
+                    http_response_code(500);
+                    echo json_encode(['error' => 'Failed to save image']);
+                    break;
+                }
+            }
+
+            // Insert new book
             $stmt = $pdo->prepare("
                 INSERT INTO livre 
-                (title, author_name, language, genre, release_date, status, dateAjout, availability, user_id) 
-                VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+                (title, author_name, language, genre, release_date, status, dateAjout, availability, user_id, image_path) 
+                VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
             ");
-        
+
             $stmt->execute([
                 $requestData['title'],
                 $requestData['author_name'],
@@ -264,78 +268,59 @@ try {
                 $requestData['release_date'] ?? null,
                 $requestData['status'] ?? 'good',
                 $requestData['availability'] ?? 'available',
-                $user_id  // Changed from $requestData['user_id'] to use the JWT token user
+                $user_id,
+                $imagePath
             ]);
-        
-            // Return success response
+
+            // Return the created book
+            $newBookId = $pdo->lastInsertId();
+            $stmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
+            $stmt->execute([$newBookId]);
+            $newBook = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($newBook['image_path']) {
+                $newBook['image_url'] = "/api/books?image=" . basename($newBook['image_path']);
+            }
+
             http_response_code(201);
             echo json_encode([
-                'id' => $pdo->lastInsertId(),
-                'message' => 'Book added successfully'
+                'message' => 'Book added successfully',
+                'book' => $newBook
             ]);
             break;
 
-
-
-
-
-        
-
         case 'PUT':
-
             $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
             
-            // Verify book ID exists
             if (empty($requestData['book_id'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Book ID is required']);
                 break;
             }
         
-            // Get current book data
-            // First check if book exists AND belongs to current user
-            // auth changes on requette
+            // Verify book exists and belongs to user
             $checkBook = $pdo->prepare("
-                SELECT * 
-                FROM livre 
-                WHERE `book_id` = ? AND user_id = ?
+                SELECT * FROM livre 
+                WHERE book_id = ? AND user_id = ?
             ");
-            //auth changes here !!
             $checkBook->execute([$requestData['book_id'], $current_user_id]);
 
-            // check if book exists before making any changes
             if ($checkBook->rowCount() === 0) {
                 http_response_code(404);
                 echo json_encode(['error' => 'Book not found or not owned by you']);
                 break;
             }
 
-
             $currentData = $checkBook->fetch(PDO::FETCH_ASSOC);
-        
-            //if (!$currentData) {
-              //  http_response_code(404);
-              //  echo json_encode(['error' => 'Book not found']);
-              //  break;
-            //}
-        
-            // Merge new data with existing data (preserve unchanged fields)
             $mergedData = array_merge($currentData, $requestData);
         
-            // Prepare dynamic update query
+            // Prepare dynamic update
             $updateFields = [];
             $params = [];
             
-            // List of allowed fields to update
             $allowedFields = [
-                'title', 
-                'author_name', 
-                'language', 
-                'genre',
-                'release_date', 
-                'status', 
-                'availability'
-                // Removed user_id from allowed updates for security
+                'title', 'author_name', 'language', 'genre',
+                'release_date', 'status', 'availability'
             ];
         
             foreach ($allowedFields as $field) {
@@ -345,18 +330,15 @@ try {
                 }
             }
         
-            // If no valid fields provided
             if (empty($updateFields)) {
                 http_response_code(400);
                 echo json_encode(['error' => 'No valid fields provided for update']);
                 break;
             }
         
-            // Add book_id to params
             $params[] = $requestData['book_id'];
         
-            // Build and execute dynamic query
-            $query = "UPDATE livre SET " . implode(', ', $updateFields) . " WHERE `book_id` = ?";
+            $query = "UPDATE livre SET " . implode(', ', $updateFields) . " WHERE book_id = ?";
             $stmt = $pdo->prepare($query);
             $stmt->execute($params);
         
@@ -368,43 +350,42 @@ try {
             }
             break;
 
-
-
-
-
-
         case 'DELETE':
-            // Verify book ID is not empty
             if (empty($_GET['id'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Book ID is required']);
                 break;
             }
 
-            //verify book belongs to current user
+            // Verify ownership
             $verifyOwnership = $pdo->prepare("
-                SELECT 1 FROM livre 
+                SELECT image_path FROM livre 
                 WHERE book_id = ? AND user_id = ?
             ");
-
             $verifyOwnership->execute([$_GET['id'], $current_user_id]);
     
             if ($verifyOwnership->rowCount() === 0) {
-                // user is trying to delete someone else's books
                 http_response_code(403);
                 echo json_encode(['error' => 'You can only delete your own books']);
                 break;
             }
+            
+            $bookData = $verifyOwnership->fetch(PDO::FETCH_ASSOC);
             $bookId = $_GET['id'];
             
-            // Option 1: Soft delete (update availability)
-            
-            
-            // Option 2: Hard delete
-             $stmt = $pdo->prepare("DELETE FROM livre WHERE book_id = ?");
-             $stmt->execute([$bookId]);
+            // Delete book
+            $stmt = $pdo->prepare("DELETE FROM livre WHERE book_id = ?");
+            $stmt->execute([$bookId]);
             
             if ($stmt->rowCount() > 0) {
+                // Delete associated image
+                if (!empty($bookData['image_path'])) {
+                    $imagePath = realpath(UPLOAD_DIR . basename($bookData['image_path']));
+                    if (file_exists($imagePath)) {
+                        unlink($imagePath);
+                    }
+                }
+                
                 echo json_encode(['message' => 'Book removed successfully']);
             } else {
                 http_response_code(404);
@@ -416,15 +397,19 @@ try {
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
     }
-
 } catch (PDOException $e) {
     error_log("[".date('Y-m-d H:i:s')."] Database Error: ".$e->getMessage()."\n", 3, __DIR__."/../logs/error.log");
     http_response_code(500);
     echo json_encode([
         'error' => 'Database error',
-        // Don't expose detailed errors in production
+        'message' => (ENVIRONMENT === 'development') ? $e->getMessage() : 'Internal server error'
+    ]);
+} catch (Exception $e) {
+    error_log("[".date('Y-m-d H:i:s')."] Error: ".$e->getMessage()."\n", 3, __DIR__."/../logs/error.log");
+    http_response_code(500);
+    echo json_encode([
+        'error' => 'Server error',
         'message' => (ENVIRONMENT === 'development') ? $e->getMessage() : 'Internal server error'
     ]);
 }
-
 ?>

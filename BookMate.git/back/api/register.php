@@ -50,12 +50,6 @@ if (strlen($password) < 8) {
     exit();
 }
 
-// Validate age
-if ($age < 18) {
-    http_response_code(400);
-    echo json_encode(['error' => 'You must be at least 18 years old']);
-    exit();
-}
 
 // Hash password
 $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
@@ -72,15 +66,12 @@ try {
     http_response_code(201);
     echo json_encode([
         'message' => 'Registration successful',
-        'user' => [
-            'user_id' => $userId,
-            'firstName' => $firstName,
-            'lastName' => $lastName,
-            'email' => $email
-        ]
+    
     ]);
+    //add cookie or redirect to login or copy code from login and redirect 
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Registration failed']);
+    //add messages for exceptions
 }
 ?>

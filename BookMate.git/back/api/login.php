@@ -42,7 +42,6 @@ setcookie('user_id', $user['user_id'], time() + 3600, "/"); // 1-hour expiration
 
 http_response_code(200);
 echo json_encode([
-    'message' => 'Login successful',
-    'user_id' => $user['user_id']
+    'message' => 'Login successful'
 ]);
 ?>
