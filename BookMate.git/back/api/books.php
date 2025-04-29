@@ -103,18 +103,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['image'])) {
     exit();
 }
 
-<<<<<<< HEAD
-/**
- * Main API Endpoint Handler
- */
-try {
-    switch ($method) {
-        case 'GET':
-            // Get single book by ID
-            if (isset($_GET['id'])) {
-                $stmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
-                $stmt->execute([$_GET['id']]);
-=======
 
 
 function normalizeBook(array $book): array {
@@ -144,7 +132,6 @@ try {
             elseif (isset($_GET['book_id'])) {
                 $stmt = $pdo->prepare("SELECT * FROM livre WHERE `book_id` = ?");
                 $stmt->execute([$_GET['book_id']]);
->>>>>>> 7accdc8ea3e0b4a0ff4259c807786448f60e3bff
                 $book = $stmt->fetch(PDO::FETCH_ASSOC);
                 
                 if ($book) {
@@ -204,21 +191,6 @@ try {
                 
                 echo json_encode($books);
             }
-<<<<<<< HEAD
-            break;
-            
-        case 'POST':
-            // Handle both JSON and form-data requests
-            if (strpos($_SERVER['CONTENT_TYPE'], 'application/json') !== false) {
-                $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
-                $imageData = null;
-            } else {
-                $requestData = sanitizeInput($_POST);
-                $imageData = $_FILES['image'] ?? null;
-            }
-
-            // Validate required fields
-=======
             break;*/
             //we hardcoded into 1
             case 'GET':
@@ -276,7 +248,6 @@ try {
         /*case 'POST':
             $requestData = json_decode(file_get_contents("php://input"), true);
 
->>>>>>> 7accdc8ea3e0b4a0ff4259c807786448f60e3bff
             if (empty($requestData['title']) || empty($requestData['author_name'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Title and author name are required']);
@@ -590,9 +561,6 @@ try {
         'message' => (ENVIRONMENT === 'development') ? $e->getMessage() : 'Internal server error'
     ]);
 }
-<<<<<<< HEAD
-?>
-=======
 /**
  * Normalize a book's data.
  *
@@ -602,4 +570,3 @@ try {
 
 
 ?>
->>>>>>> 7accdc8ea3e0b4a0ff4259c807786448f60e3bff
