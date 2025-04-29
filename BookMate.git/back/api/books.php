@@ -103,6 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['image'])) {
     exit();
 }
 
+<<<<<<< HEAD
 /**
  * Main API Endpoint Handler
  */
@@ -113,6 +114,37 @@ try {
             if (isset($_GET['id'])) {
                 $stmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
                 $stmt->execute([$_GET['id']]);
+=======
+
+
+function normalizeBook(array $book): array {
+    return [
+        'id' => $book['book_id'],
+        'title' => $book['title'],
+        'author' => $book['author_name'],
+        'language' => $book['language'],
+        'genre' => $book['genre'],
+        'releaseDate' => $book['release_date'],
+        'status' => $book['status'],
+        'coverImage' => $book['URL'],
+        'availability' => (bool) $book['availability'],
+        'userId' => $book['user_id']
+    ];
+}
+
+try {
+    switch ($method) {
+        /*case 'GET':
+            if (isset($_GET['user_id'])) {
+                $stmt = $pdo->prepare("SELECT * FROM livre WHERE user_id = ?");
+                $stmt->execute([$_GET['user_id']]);
+                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                echo json_encode($books);
+            } 
+            elseif (isset($_GET['book_id'])) {
+                $stmt = $pdo->prepare("SELECT * FROM livre WHERE `book_id` = ?");
+                $stmt->execute([$_GET['book_id']]);
+>>>>>>> 7accdc8ea3e0b4a0ff4259c807786448f60e3bff
                 $book = $stmt->fetch(PDO::FETCH_ASSOC);
                 
                 if ($book) {
@@ -156,7 +188,12 @@ try {
             } 
             // Get all books
             else {
-                $stmt = $pdo->query("SELECT * FROM livre WHERE availability = 'available'");
+                if (isset($_GET['user_id'])) {
+                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE availability = 1 AND user_id <> 1");//i hard coded the uzser_iid to try it out
+                    $stmt->execute([$_GET['user_id']]);
+                } else {
+                    $stmt = $pdo->query("SELECT * FROM livre WHERE availability = 1");
+                }
                 $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 
                 foreach ($books as &$book) {
@@ -167,6 +204,7 @@ try {
                 
                 echo json_encode($books);
             }
+<<<<<<< HEAD
             break;
             
         case 'POST':
@@ -180,6 +218,65 @@ try {
             }
 
             // Validate required fields
+=======
+            break;*/
+            //we hardcoded into 1
+            case 'GET':
+                if (isset($_GET['own_books']) && $_GET['own_books'] === 'true') {
+                    // Fetch the user's own books (for "My Library" page), hardcoded user_id = 1
+                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE user_id = ?");
+                    $stmt->execute([1]); // Hardcoded user_id = 1
+                    $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    $normalizedBooks = array_map('normalizeBook', $books);
+                    echo json_encode($normalizedBooks);
+                } 
+                elseif (isset($_GET['book_id'])) {
+                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE `book_id` = ?");
+                    $stmt->execute([$_GET['book_id']]);
+                    $book = $stmt->fetch(PDO::FETCH_ASSOC);
+                    if ($book) {
+                        $normalizedBook = normalizeBook($book);
+                        echo json_encode($normalizedBook);
+                    } else {
+                        http_response_code(404);
+                        echo json_encode(['error' => 'Book not found']);
+                    }
+                } 
+                elseif (isset($_GET['title']) || isset($_GET['genre']) || isset($_GET['author'])) {
+                    $title = isset($_GET['title']) ? "%{$_GET['title']}%" : "%";
+                    $genre = isset($_GET['genre']) ? $_GET['genre'] : "%";
+                    $author = isset($_GET['author']) ? "%{$_GET['author']}%" : "%";
+        
+                    $stmt = $pdo->prepare("
+                        SELECT * FROM livre 
+                        WHERE (title LIKE :title AND author_name LIKE :author
+                        AND genre LIKE :genre
+                        AND availability = 1)
+                    ");
+        
+                    $stmt->execute([
+                        ':title' => $title,
+                        ':author' => $author,
+                        ':genre' => $genre
+                    ]);
+        
+                    $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    $normalizedBooks = array_map('normalizeBook', $books);
+                    echo json_encode($normalizedBooks);
+                } 
+                else {
+                    // Fetch available books, excluding user_id = 1 (for "Home" page)
+                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE availability = 1 AND user_id <> ?");
+                    $stmt->execute([1]); // Hardcoded user_id = 1
+                    $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    $normalizedBooks = array_map('normalizeBook', $books);
+                    echo json_encode($normalizedBooks);
+                }
+                break;
+        /*case 'POST':
+            $requestData = json_decode(file_get_contents("php://input"), true);
+
+>>>>>>> 7accdc8ea3e0b4a0ff4259c807786448f60e3bff
             if (empty($requestData['title']) || empty($requestData['author_name'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Title and author name are required']);
@@ -287,7 +384,88 @@ try {
                 'message' => 'Book added successfully',
                 'book' => $newBook
             ]);
-            break;
+            break;*/
+
+
+
+            case 'POST':
+                $requestData = json_decode(file_get_contents("php://input"), true);
+    
+                if (empty($requestData['title']) || empty($requestData['authorName'])) {
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Title and author name are required']);
+                    break;
+                }
+    
+                $title = $requestData['title'];
+                $authorName = $requestData['authorName'];
+    
+                // Hardcode user_id to 1
+                $userId = 1;
+    
+                $userCheck = $pdo->prepare("SELECT 1 FROM users WHERE user_id = ?");
+                $userCheck->execute([$userId]);
+    
+                if ($userCheck->rowCount() === 0) {
+                    http_response_code(404);
+                    echo json_encode(['error' => 'User not found']);
+                    break;
+                }
+    
+                $duplicateCheck = $pdo->prepare("
+                    SELECT 1 FROM livre
+                    WHERE title = ? 
+                    AND author_name = ? 
+                    AND user_id = ?
+                ");
+                $duplicateCheck->execute([$title, $authorName, $userId]);
+    
+                if ($duplicateCheck->rowCount() > 0) {
+                    http_response_code(409);
+                    echo json_encode(['error' => 'This user already has a book with the same title and author']);
+                    break;
+                }
+    
+                // Explicitly cast availability to boolean (1 or 0)
+                $availability = isset($requestData['availability']) ? (int) $requestData['availability'] : 1;
+                $availability = $availability ? 1 : 0;
+    
+                $stmt = $pdo->prepare("
+                    INSERT INTO livre 
+                    (title, author_name, language, genre, release_date, status, URL, dateAjout, availability, user_id) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+                ");
+    
+                $stmt->execute([
+                    $requestData['title'],
+                    $requestData['authorName'],
+                    $requestData['language'] ?? 'Unknown',
+                    $requestData['genre'] ?? 'Other',
+                    $requestData['releaseDate'] ?? null,
+                    $requestData['status'] ?? 'good',
+                    $requestData['coverImage'] ?? '',
+                    $availability,
+                    $userId // Hardcoded user_id = 1
+                ]);
+    
+                $bookId = $pdo->lastInsertId();
+    
+                // Fetch the newly added book to return in the response
+                $fetchStmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
+                $fetchStmt->execute([$bookId]);
+                $newBook = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+    
+                http_response_code(201);
+                echo json_encode([
+                    'book' => normalizeBook($newBook),
+                    'message' => 'Book added successfully'
+                ]);
+                break;
+    
+
+
+
+
 
         case 'PUT':
             $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
@@ -412,4 +590,16 @@ try {
         'message' => (ENVIRONMENT === 'development') ? $e->getMessage() : 'Internal server error'
     ]);
 }
+<<<<<<< HEAD
 ?>
+=======
+/**
+ * Normalize a book's data.
+ *
+ * @param array $book The book data to normalize.
+ * @return array The normalized book data.
+ */
+
+
+?>
+>>>>>>> 7accdc8ea3e0b4a0ff4259c807786448f60e3bff

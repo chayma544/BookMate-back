@@ -1,7 +1,7 @@
 <?php
-header("Access-Control-Allow-Origin: *"); 
+header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 
 require_once __DIR__ . '/../config/database.php';
@@ -14,6 +14,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
+// Helper function to normalize request data (for consistency with books.php)
+function normalizeRequest($request) {
+    return [
+        'requestId' => $request['request_id'],
+        'requesterId' => $request['requester_id'],
+        'bookId' => $request['book_id'],
+        'type' => $request['type'],
+        'status' => $request['status'],
+        'datedeb' => $request['datedeb'],
+        'durée' => $request['durée'],
+        'reasonText' => $request['reasonText'],
+        'bookTitle' => $request['title'] ?? null,
+        'authorName' => $request['author_name'] ?? null,
+        'requesterFirstName' => $request['requester_first_name'] ?? $request['FirstName'] ?? null,
+        'requesterLastName' => $request['requester_last_name'] ?? $request['LastName'] ?? null,
+        'ownerFirstName' => $request['owner_first_name'] ?? $request['FirstName'] ?? null,
+        'ownerLastName' => $request['owner_last_name'] ?? $request['LastName'] ?? null,
+    ];
+}
+
 try {
     switch ($method) {
         case 'GET':
@@ -24,13 +44,14 @@ try {
                 $request = $stmt->fetch(PDO::FETCH_ASSOC);
                 
                 if ($request) {
-                    echo json_encode($request);
+                    $normalizedRequest = normalizeRequest($request);
+                    echo json_encode($normalizedRequest);
                 } else {
                     http_response_code(404);
                     echo json_encode(['error' => 'Request not found']);
                 }
             }
-            // Get requests by user ID (as requester)
+            // Get requests by user ID (as requester), hardcoded requester_id = 1
             elseif (isset($_GET['user_id'])) {
                 $stmt = $pdo->prepare("
                     SELECT r.*, l.title, l.author_name, u.FirstName, u.LastName 
@@ -39,11 +60,12 @@ try {
                     JOIN user u ON l.user_id = u.user_id
                     WHERE r.requester_id = ?
                 ");
-                $stmt->execute([$_GET['user_id']]);
+                $stmt->execute([1]); // Hardcoded requester_id = 1
                 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                echo json_encode($requests);
+                $normalizedRequests = array_map('normalizeRequest', $requests);
+                echo json_encode($normalizedRequests);
             }
-            // Get requests for books owned by a specific user
+            // Get requests for books owned by a specific user, hardcoded owner_id = 1
             elseif (isset($_GET['owner_id'])) {
                 $stmt = $pdo->prepare("
                     SELECT r.*, l.title, l.author_name, u.FirstName, u.LastName 
@@ -52,9 +74,10 @@ try {
                     JOIN user u ON r.requester_id = u.user_id
                     WHERE l.user_id = ?
                 ");
-                $stmt->execute([$_GET['owner_id']]);
+                $stmt->execute([1]); // Hardcoded owner_id = 1
                 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                echo json_encode($requests);
+                $normalizedRequests = array_map('normalizeRequest', $requests);
+                echo json_encode($normalizedRequests);
             }
             // Get all requests
             else {
@@ -68,141 +91,79 @@ try {
                     JOIN user owner ON l.user_id = owner.user_id
                 ");
                 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                echo json_encode($requests);
+                $normalizedRequests = array_map('normalizeRequest', $requests);
+                echo json_encode($normalizedRequests);
             }
             break;
 
+        case 'POST':
+            $data = json_decode(file_get_contents('php://input'), true);
 
-            case 'POST':
-                $data = json_decode(file_get_contents('php://input'), true);
-
-                $requester_id = isset($data['requester_id']) ? intval($data['requester_id']) : 0;
-                $book_id = isset($data['book_id']) ? intval($data['book_id']) : 0;
-                $type = isset($data['type']) ? $conn->real_escape_string($data['type']) : '';
-                $status = isset($data['status']) ? $conn->real_escape_string($data['status']) : '';
-                $datedeb = isset($data['datedeb']) ? $conn->real_escape_string($data['datedeb']) : '';
-                $durée = isset($data['durée']) ? intval($data['durée']) : 0;
-                $reasonText = isset($data['reasonText']) ? $conn->real_escape_string($data['reasonText']) : '';
-                $owner_email = isset($data['owner_email']) ? $conn->real_escape_string($data['owner_email']) : '';
-                if ($requester_id > 0 && $book_id > 0 && $type && $status && $datedeb && $durée > 0 && $owner_email) {
-                    // Insert the swap request into the database
-                    $stmt = $conn->prepare("INSERT INTO requests (requester_id, book_id, type, status, datedeb, durée, reasonText) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("iisssis", $requester_id, $book_id, $type, $status, $datedeb, $durée, $reasonText);
-
-                    if ($stmt->execute()) {
-                        // Send email to the owner
-                        $subject = "New Swap Request for Your Book";
-                        $message = "Hello,\n\nA user has requested to swap your book (ID: $book_id).\n\n";
-                        $message .= "Reason: $reasonText\n";
-                        $message .= "Start Date: $datedeb\n";
-                        $message .= "Duration: $durée days\n\n";
-                        $message .= "Please log in to BookMate to review the request.\n\nBest regards,\nBookMate Team";
-                        $headers = "From: no-reply@bookmate.com\r\n";
-
-
-                        $stmt = $conn->prepare("INSERT INTO requests (requester_id, book_id, type, status, datedeb, durée, reasonText) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                        $stmt->bind_param("iisssis", $requester_id, $book_id, $type, $status, $datedeb, $durée, $reasonText);
-
-                        
-                        if (mail($owner_email, $subject, $message, $headers)) {
-                            echo json_encode(["success" => "Swap request submitted and email sent"]);
-                        } else {
-                            echo json_encode(["success" => "Swap request submitted, but failed to send email"]);
-                        }
-                    } else {
-                        echo json_encode(["error" => "Failed to submit swap request"]);
-                    }
-
-                    $stmt->close();
-                } else {
-                    echo json_encode(["error" => "Invalid or missing data"]);
-                }
-                $conn->close();
-            
-        /*case 'POST':
-            // Parse the incoming JSON data
-            $requestData = json_decode(file_get_contents("php://input"), true);
-            
-            // Validate required fields
-            if (empty($requestData['requester_id']) || empty($requestData['book_id']) || empty($requestData['type'])) {
+            // Validate required fields (only those that are NOT NULL in the database)
+            if (
+                !isset($data['bookId']) || $data['bookId'] === '' ||
+                !isset($data['reasonText']) || trim($data['reasonText']) === '' ||
+                !isset($data['ownerEmail']) || trim($data['ownerEmail']) === ''
+            ) {
                 http_response_code(400);
-                echo json_encode(['error' => 'Requester ID, book ID, and request type are required']);
+                echo json_encode(['error' => 'Missing required fields']);
                 break;
             }
-            
-            // Check if user exists
-            $userCheck = $pdo->prepare("SELECT 1 FROM user WHERE user_id = ?");
-            $userCheck->execute([$requestData['requester_id']]);
-            
-            if ($userCheck->rowCount() === 0) {
-                http_response_code(404);
-                echo json_encode(['error' => 'Requester not found']);
-                break;
-            }
-            
-            // Check if book exists and is available
-            $bookCheck = $pdo->prepare("SELECT user_id, availability FROM livre WHERE book_id = ?");
-            $bookCheck->execute([$requestData['book_id']]);
-            $book = $bookCheck->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$book) {
-                http_response_code(404);
-                echo json_encode(['error' => 'Book not found']);
-                break;
-            }
-            
-            if ($book['availability'] !== 'available') {
-                http_response_code(409);
-                echo json_encode(['error' => 'Book is not available']);
-                break;
-            }
-            
-            // Check if requester is not the book owner
-            if ($book['user_id'] == $requestData['requester_id']) {
-                http_response_code(400);
-                echo json_encode(['error' => 'You cannot request your own book']);
-                break;
-            }
-            
-            // Check for existing pending request
-            $duplicateCheck = $pdo->prepare("
-                SELECT 1 FROM requests
-                WHERE book_id = ? AND requester_id = ? AND status = 'PENDING'
-            ");
-            $duplicateCheck->execute([$requestData['book_id'], $requestData['requester_id']]);
-            
-            if ($duplicateCheck->rowCount() > 0) {
-                http_response_code(409);
-                echo json_encode(['error' => 'You already have a pending request for this book']);
-                break;
-            }
-            
-            // Insert new request
+        
+            // Hardcode requester_id to 1
+            $requesterId = 1;
+
+            // Set default values for optional fields
+            $type = $data['type'] ?? 'BORROW'; 
+            $status = $data['status'] ?? 'PENDING'; 
+            $datedeb = $data['datedeb'] ?? null; // Can be NULL
+            $durée = $data['durée'] ?? null; // Can be NULL
+        
+            // Insert the swap request into the database
             $stmt = $pdo->prepare("
-                INSERT INTO requests 
-                (requester_id, book_id, type, status) 
-                VALUES (?, ?, ?, 'PENDING')
+                INSERT INTO requests (requester_id, book_id, type, status, datedeb, durée, reasonText) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
-        
             $stmt->execute([
-                $requestData['requester_id'],
-                $requestData['book_id'],
-                $requestData['type'] // 'BORROW' or 'EXCHANGE'
+                $requesterId, // Hardcoded to 1
+                $data['bookId'],
+                $type,
+                $status,
+                $datedeb,
+                $durée,
+                $data['reasonText']
             ]);
+
+            $requestId = $pdo->lastInsertId();
         
-            // Return success response
+            // Send email to the owner (optional, suppress errors)
+            $subject = "New Swap Request for Your Book";
+            $message = "Hello,\n\nA user has requested to swap your book (ID: {$data['bookId']}).\n\n";
+            $message .= "Reason: {$data['reasonText']}\n";
+            $message .= "Start Date: " . ($data['datedeb'] ?? 'Not specified') . "\n";
+            $message .= "Duration: " . ($data['durée'] ?? 'Not specified') . " days\n\n";
+            $message .= "Please log in to BookMate to review the request.\n\nBest regards,\nBookMate Team";
+            $headers = "From: no-reply@bookmate.com\r\n";
+        
+            $mailSent = @mail($data['ownerEmail'], $subject, $message, $headers);
+        
+            // Fetch the newly created request to return in the response
+            $fetchStmt = $pdo->prepare("SELECT * FROM requests WHERE request_id = ?");
+            $fetchStmt->execute([$requestId]);
+            $newRequest = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+
             http_response_code(201);
             echo json_encode([
-                'id' => $pdo->lastInsertId(),
-                'message' => 'Book request submitted successfully'
+                "success" => "Swap request submitted" . ($mailSent ? " and email sent" : ", but failed to send email"),
+                "request" => normalizeRequest($newRequest)
             ]);
-            break;*/
-            
+            break;
+
         case 'PUT':
             $requestData = json_decode(file_get_contents("php://input"), true);
             
             // Verify request ID and status
-            if (empty($requestData['request_id']) || empty($requestData['status'])) {
+            if (empty($requestData['requestId']) || empty($requestData['status'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Request ID and status are required']);
                 break;
@@ -222,7 +183,7 @@ try {
                 JOIN livre l ON r.book_id = l.book_id
                 WHERE r.request_id = ?
             ");
-            $checkRequest->execute([$requestData['request_id']]);
+            $checkRequest->execute([$requestData['requestId']]);
             $currentRequest = $checkRequest->fetch(PDO::FETCH_ASSOC);
         
             if (!$currentRequest) {
@@ -233,10 +194,10 @@ try {
             
             // Update request status
             $stmt = $pdo->prepare("UPDATE requests SET status = ? WHERE request_id = ?");
-            $stmt->execute([$requestData['status'], $requestData['request_id']]);
+            $stmt->execute([$requestData['status'], $requestData['requestId']]);
             
             // If request is accepted, update book availability
-            if ($requestData['status'] == 'ACCEPTED') {
+            if ($requestData['status'] === 'ACCEPTED') {
                 // Update book availability
                 $updateBook = $pdo->prepare("UPDATE livre SET availability = 'borrowed' WHERE book_id = ?");
                 $updateBook->execute([$currentRequest['book_id']]);
@@ -247,7 +208,7 @@ try {
                     SET status = 'REJECTED' 
                     WHERE book_id = ? AND request_id != ? AND status = 'PENDING'
                 ");
-                $rejectOthers->execute([$currentRequest['book_id'], $requestData['request_id']]);
+                $rejectOthers->execute([$currentRequest['book_id'], $requestData['requestId']]);
             }
         
             if ($stmt->rowCount() > 0) {
@@ -257,7 +218,7 @@ try {
                 echo json_encode(['message' => 'No changes made']);
             }
             break;
-            
+
         case 'DELETE':
             // Verify request ID
             if (empty($_GET['id'])) {
@@ -291,10 +252,11 @@ try {
             
             echo json_encode(['message' => 'Request canceled successfully']);
             break;
-            
+
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
+            break;
     }
 
 } catch (PDOException $e) {

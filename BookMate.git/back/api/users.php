@@ -34,7 +34,7 @@ try {
                     echo json_encode(['error' => 'User not found']);
                 }
             } else {
-                $stmt = $pdo->prepare("SELECT * FROM users");
+                $stmt = $pdo->prepare("SELECT * FROM user");
                 $stmt->execute();
                 $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 echo json_encode($users);
@@ -42,6 +42,7 @@ try {
             break;
 
         case 'POST':
+            
             // Parse incoming JSON data
             $requestData = json_decode(file_get_contents("php://input"), true);
 
