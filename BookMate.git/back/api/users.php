@@ -1,5 +1,11 @@
 <?php 
 
+session_start();
+
+if(isset($_SESSION)){
+    header('location:login.php');
+}
+
 header('Content-Type: application/json'); // Force JSON response
 error_reporting(E_ALL); // Show all errors
 ini_set('display_errors', 1);
@@ -12,7 +18,7 @@ header("Access-Control-Allow-Headers: Content-Type");
 require_once __DIR__ . '/../config/db.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
+    http_response_code(response_code: 200);
     exit();
 }
 
@@ -21,11 +27,13 @@ $method = $_SERVER['REQUEST_METHOD'];
 try {
     switch ($method) {
         case 'GET':
-            if (isset($_GET['user_id'])) {
-                error_log("Received user_id: " . $_GET['user_id']); // Debug log
+            //  show profile info 
+            if (isset($_SESSION['user_id'])) {
+                $id= $_SESSION['user_id'];
+                error_log("Received user_id: " . $id); // Debug log error?
                 $stmt = $pdo->prepare("SELECT * FROM user WHERE user_id = ?");
-                $stmt->execute([$_GET['user_id']]);
-                $user = $stmt->fetch(PDO::FETCH_ASSOC);
+                $stmt->execute([$id]);
+                $user = $stmt->fetch(mode: PDO::FETCH_ASSOC);
                 error_log("Fetched user: " . json_encode($user)); // Debug log
                 if ($user) {
                     echo json_encode($user);
@@ -33,163 +41,188 @@ try {
                     http_response_code(404);
                     echo json_encode(['error' => 'User not found']);
                 }
-            } else {
-                $stmt = $pdo->prepare("SELECT * FROM user");
-                $stmt->execute();
-                $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                echo json_encode($users);
-            }
+            } 
             break;
 
-        case 'POST':
-            
-            // Parse incoming JSON data
-            $requestData = json_decode(file_get_contents("php://input"), true);
-
-            // Validate required fields for adding a user
-            if (empty($requestData['FirstName']) || empty($requestData['LastName']) || empty($requestData['email'])) {
-                http_response_code(400);
-                echo json_encode(['error' => 'First name, last name, and email are required']);
-                break;
-            }
-
-            // Check if email already exists
-            $emailCheck = $pdo->prepare("SELECT 1 FROM profil WHERE email = ?");
-            $emailCheck->execute([$requestData['email']]);
-
-            if ($emailCheck->rowCount() > 0) {
-                http_response_code(409);
-                echo json_encode(['error' => 'Email already exists']);
-                break;
-            }
-
-            // Insert new user into database
-            $stmt = $pdo->prepare("
-                INSERT INTO user (FirstName, LastName, age, address, user_swap_score) 
-                VALUES (?, ?, ?, ?, ?)
-            ");
-            $stmt->execute([
-                $requestData['FirstName'],
-                $requestData['LastName'],
-                $requestData['age'] ?? null,
-                $requestData['address'] ?? null,
-                0 // Default swap score
-            ]);
-
-            $userId = $pdo->lastInsertId();
-
-            // Insert profile data for the new user
-            $profileStmt = $pdo->prepare("
-                INSERT INTO profil (user_id, email, password) 
-                VALUES (?, ?, ?)
-            ");
-            $profileStmt->execute([
-                $userId,
-                $requestData['email'],
-                password_hash($requestData['password'], PASSWORD_DEFAULT) // Password hashing
-            ]);
-
-            http_response_code(201);
-            echo json_encode([
-                'id' => $userId,
-                'message' => 'User added successfully'
-            ]);
-            break;
-
-            case 'PUT': //  If someone sends a request to update a user (PUT = change)
     
-                //  Grab the data the user sent in the body of the request (it's in JSON format)
+            case 'PUT':
+                // Verify user is logged in
+                if (empty($_SESSION['user_id'])) {
+                    http_response_code(401);
+                    echo json_encode(['error' => 'Unauthorized - Please log in']);
+                    break;
+                }
+            
+                $currentUserId = $_SESSION['user_id'];
+                $isAdmin = ($_SESSION['role'] ?? 'user') === 'admin';
                 $requestData = json_decode(file_get_contents("php://input"), true);
             
-                //  Make sure they told us WHO they want to update (must include user_id)
-                if (empty($requestData['user_id'])) {
-                    http_response_code(400); // 400 = Bad Request
-                    echo json_encode(['error' => 'User ID is required']);
+                // ADMIN FUNCTIONALITY: Block/Unblock users
+                if ($isAdmin && isset($requestData['user_id']) && isset($requestData['status'])) {
+                    // Validate status
+                    if (!in_array($requestData['status'], ['active', 'blocked'])) {
+                        http_response_code(400);
+                        echo json_encode(['error' => 'Invalid status value']);
+                        break;
+                    }
+            
+                    // Prevent admins from blocking themselves
+                    if ($requestData['user_id'] == $currentUserId) {
+                        http_response_code(403);
+                        echo json_encode(['error' => 'Admins cannot block themselves']);
+                        break;
+                    }
+            
+                    // Update user status
+                    $stmt = $pdo->prepare("UPDATE user SET status = ? WHERE user_id = ?");
+                    $stmt->execute([$requestData['status'], $requestData['user_id']]);
+            
+                    if ($stmt->rowCount() > 0) {
+                        echo json_encode([
+                            'message' => 'User status updated successfully',
+                            'new_status' => $requestData['status']
+                        ]);
+                    } else {
+                        http_response_code(404);
+                        echo json_encode(['error' => 'User not found or no changes made']);
+                    }
                     break;
                 }
             
-                //  Look in the database to see if this user exists
-                $checkUser = $pdo->prepare("SELECT * FROM user WHERE `user_id` = ?");
-                $checkUser->execute([$requestData['user_id']]);
-                $currentData = $checkUser->fetch(PDO::FETCH_ASSOC);
-            
-                //  If the user doesn’t exist, tell them
-                if (!$currentData) {
-                    http_response_code(404); // 404 = Not Found
-                    echo json_encode(['error' => 'User not found']);
-                    break;
-                }
-            
-                //  Combine the old user info with the new changes they gave us
-                $mergedData = array_merge($currentData, $requestData);
-            
-                //  We're going to build the update sentence dynamically
-                $updateFields = []; // This will hold things like: "FirstName = ?"
-                $params = [];       // This will hold the values like: "Lina", "Tunis", etc.
-            
-                //  Only allow these fields to be updated (for safety)
-                $allowedFields = [
-                    'FirstName', 
-                    'LastName', 
-                    'age', 
-                    'address'
-                ];
-            
-                //  Loop through allowed fields and see if any were provided in the request
+                // REGULAR USER PROFILE UPDATE
+                $allowedFields = ['FirstName', 'LastName', 'age', 'address'];
+                $updateFields = [];
+                $params = [];
+                
                 foreach ($allowedFields as $field) {
                     if (isset($requestData[$field])) {
-                        $updateFields[] = "`$field` = ?";     // Add the field to the update list
-                        $params[] = $requestData[$field];     // Add the value to use
+                        $cleanValue = htmlspecialchars(trim($requestData[$field]), ENT_QUOTES, 'UTF-8');
+                        $updateFields[] = "`$field` = ?";
+                        $params[] = $cleanValue;
                     }
                 }
             
-                //  If the person didn’t send any valid fields to update, reject it
                 if (empty($updateFields)) {
-                    http_response_code(400); // 400 = Bad Request
+                    http_response_code(400);
                     echo json_encode(['error' => 'No valid fields provided for update']);
                     break;
                 }
             
-                //  Add user_id at the end so we can tell the DB which user to update
-                $params[] = $requestData['user_id'];
+                $params[] = $currentUserId; // WHERE condition
             
-                //  Build the final update query like: UPDATE user SET FirstName = ?, age = ? WHERE user_id = ?
-                $query = "UPDATE user SET " . implode(', ', $updateFields) . " WHERE `user_id` = ?";
-                $stmt = $pdo->prepare($query); // Prepare the SQL query
-                $stmt->execute($params);       // Execute with all the values
+                try {
+                    $query = "UPDATE user SET " . implode(', ', $updateFields) . " WHERE user_id = ?";
+                    $stmt = $pdo->prepare($query);
+                    $stmt->execute($params);
             
-                //  If at least one row was changed, success!
-                if ($stmt->rowCount() > 0) {
-                    echo json_encode(['message' => 'User updated successfully']);
-                } else {
-                    //  Otherwise, maybe the data was the same as before
-                    http_response_code(404);
-                    echo json_encode(['error' => 'No changes made']);
+                    if ($stmt->rowCount() > 0) {
+                        $updatedUser = $pdo->prepare("
+                            SELECT user_id, FirstName, LastName, age, address, status 
+                            FROM user 
+                            WHERE user_id = ?
+                        ");
+                        $updatedUser->execute([$currentUserId]);
+                        
+                        echo json_encode([
+                            'message' => 'Profile updated successfully',
+                            'user' => $updatedUser->fetch(PDO::FETCH_ASSOC)
+                        ]);
+                    } else {
+                        http_response_code(200);
+                        echo json_encode(['message' => 'No changes made']);
+                    }
+                } catch (PDOException $e) {
+                    http_response_code(500);
+                    echo json_encode([
+                        'error' => 'Database error',
+                        'message' => $e->getMessage()
+                    ]);
                 }
-            
                 break;
-            
 
         case 'DELETE':
-            if (empty($_GET['id'])) {
-                http_response_code(400);
-                echo json_encode(['error' => 'User ID is required']);
+
+            // Verify user is logged in
+            if (empty($_SESSION['user_id'])) {
+                http_response_code(401);
+                echo json_encode(['error' => 'Unauthorized - Please log in']);
                 break;
             }
 
-            // Delete user profile first
-            $profileStmt = $pdo->prepare("DELETE FROM profil WHERE user_id = ?");
-            $profileStmt->execute([$_GET['id']]);
+            $userId = $_SESSION['user_id'];
 
-            // Delete the user record
-            $stmt = $pdo->prepare("DELETE FROM user WHERE user_id = ?");
-            $stmt->execute([$_GET['id']]);
+            try {
+                // Start transaction
+                $pdo->beginTransaction();
 
-            if ($stmt->rowCount() > 0) {
-                echo json_encode(['message' => 'User removed successfully']);
-            } else {
-                http_response_code(404);
-                echo json_encode(['error' => 'User not found']);
+                // 1. Delete profile image if exists
+                $stmt = $pdo->prepare("SELECT imageURL FROM user WHERE user_id = ?");
+                $stmt->execute([$userId]);
+                $userImage = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($userImage && !empty($userImage['imageURL'])) {
+                    if (file_exists($userImage['imageURL'])) {
+                        unlink($userImage['imageURL']);
+                    }
+                }
+
+                // 2. Delete all book images and their records
+                $bookStmt = $pdo->prepare("SELECT book_id, URL FROM livre WHERE user_id = ?");
+                $bookStmt->execute([$userId]);
+                $books = $bookStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($books as $book) {
+                    // Delete book image
+                    if (!empty($book['URL']) && file_exists($book['URL'])) {
+                        unlink($book['URL']);
+                    }
+                    
+                    // Delete all requests associated with this book
+                    $pdo->prepare("DELETE FROM requests WHERE book_id = ?")->execute([$book['book_id']]);
+                }
+                
+                // Delete all books
+                $pdo->prepare("DELETE FROM livre WHERE user_id = ?")->execute([$userId]);
+
+                // 3. Delete all requests made BY this user
+                $pdo->prepare("DELETE FROM requests WHERE requester_id = ?")->execute([$userId]);
+
+                // 4. Delete profile data
+                $pdo->prepare("DELETE FROM profil WHERE user_id = ?")->execute([$userId]);
+
+                // 5. Finally delete the user
+                $deleteStmt = $pdo->prepare("DELETE FROM user WHERE user_id = ?");
+                $deleteStmt->execute([$userId]);
+
+                if ($deleteStmt->rowCount() > 0) {
+                    $pdo->commit(); // Commit all changes
+                    session_destroy(); // Clear the session
+                    
+                    echo json_encode([
+                        'message' => 'Account deleted successfully',
+                        'deleted_books' => count($books),
+                        'deleted_requests' => $pdo->query("SELECT ROW_COUNT()")->fetchColumn()
+                    ]);
+                } else {
+                    $pdo->rollBack();
+                    http_response_code(404);
+                    echo json_encode(['error' => 'User not found']);
+                }
+
+            } catch (PDOException $e) {
+                $pdo->rollBack();
+                http_response_code(500);
+                echo json_encode([
+                    'error' => 'Database error',
+                    'message' => $e->getMessage()
+                ]);
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                http_response_code(500);
+                echo json_encode([
+                    'error' => 'File system error',
+                    'message' => $e->getMessage()
+                ]);
             }
             break;
 
@@ -211,5 +244,44 @@ function addSwapScore($userId) {
     // Increase the user's swap score by 1 each time a swap is made
     $stmt = $pdo->prepare("UPDATE user SET user_swap_score = user_swap_score + 1 WHERE user_id = ?");
     $stmt->execute([$userId]);
+}
+function updatePdp($user_id) {
+    global $pdo;
+        // simple , amloulha api endpoint wahadha mathabik 
+        //echo  updatePdp($_SESSION['user_id']); fel api eli ybadel taswira 
+    if (isset($_FILES['image']) && $_FILES['image']['error'] === 0) {
+        $imageName = basename($_FILES['image']['name']);
+        $uploadDir = 'images/';
+        $targetPath = $uploadDir . $imageName;
+
+        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+        $fileType = mime_content_type($_FILES['image']['tmp_name']);
+
+        if (in_array($fileType, $allowedTypes)) {
+            if (move_uploaded_file($_FILES['image']['tmp_name'], $targetPath)) {
+                try {
+                    $stmt = $pdo->prepare('UPDATE user SET imageURL = :imageURL WHERE user_id = :user_id');
+                    $stmt->execute([
+                        'imageURL' => $targetPath,
+                        'user_id' => $user_id
+                    ]);
+                    return "Image ajoutée avec succès.";
+                } catch (Exception $e) {
+                    return "Erreur lors de l'ajout : " . $e->getMessage();
+                }
+            } else {
+                return "Échec du téléchargement de l'image.";
+            }
+        } else {
+            return "Type d'image non autorisé (JPG, PNG, GIF uniquement).";
+        }
+    } else {
+        return "Veuillez sélectionner une image.";
+    }
+}
+// change me 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action']) && $_GET['action'] === 'updatepdp') {
+    $message = updatePdp($_SESSION['user_id']);
+    echo $message;
 }
 ?>
