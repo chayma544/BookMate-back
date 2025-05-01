@@ -2,7 +2,7 @@
 
 session_start();
 
-if(isset($_SESSION)){
+if(!isset($_SESSION)){
     header('location:login.php');
 }
 
@@ -162,7 +162,7 @@ try {
                 
                 if ($userImage && !empty($userImage['imageURL'])) {
                     if (file_exists($userImage['imageURL'])) {
-                        unlink($userImage['imageURL']);
+                        unlink('../user_images'.$userImage['imageURL']);
                     }
                 }
 
@@ -174,7 +174,7 @@ try {
                 foreach ($books as $book) {
                     // Delete book image
                     if (!empty($book['URL']) && file_exists($book['URL'])) {
-                        unlink($book['URL']);
+                        unlink('../book_images'.$book['URL']);
                     }
                     
                     // Delete all requests associated with this book
@@ -186,9 +186,6 @@ try {
 
                 // 3. Delete all requests made BY this user
                 $pdo->prepare("DELETE FROM requests WHERE requester_id = ?")->execute([$userId]);
-
-                // 4. Delete profile data
-                $pdo->prepare("DELETE FROM profil WHERE user_id = ?")->execute([$userId]);
 
                 // 5. Finally delete the user
                 $deleteStmt = $pdo->prepare("DELETE FROM user WHERE user_id = ?");
