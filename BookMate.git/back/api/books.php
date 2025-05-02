@@ -122,77 +122,7 @@ function normalizeBook(array $book): array {
 
 try {
     switch ($method) {
-        /*case 'GET':
-            if (isset($_GET['user_id'])) {
-                $stmt = $pdo->prepare("SELECT * FROM livre WHERE user_id = ?");
-                $stmt->execute([$_GET['user_id']]);
-                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                echo json_encode($books);
-            } 
-            elseif (isset($_GET['book_id'])) {
-                $stmt = $pdo->prepare("SELECT * FROM livre WHERE `book_id` = ?");
-                $stmt->execute([$_GET['book_id']]);
-                $book = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if ($book) {
-                    if ($book['image_path']) {
-                        $book['image_url'] = "/api/books?image=" . basename($book['image_path']);
-                    }
-                    echo json_encode($book);
-                } else {
-                    http_response_code(404);
-                    echo json_encode(['error' => 'Book not found']);
-                }
-            } 
-            // Search books
-            elseif (isset($_GET['title']) || isset($_GET['genre']) || isset($_GET['author'])) {
-                $title = isset($_GET['title']) ? "%{$_GET['title']}%" : "%";
-                $genre = isset($_GET['genre']) ? $_GET['genre'] : "%";
-                $author = isset($_GET['author']) ? "%{$_GET['author']}%" : "%";
-                
-                $stmt = $pdo->prepare("
-                    SELECT * FROM livre 
-                    WHERE (title LIKE :title AND author_name LIKE :author
-                    AND genre LIKE :genre
-                    AND availability = 'available')
-                ");
-                
-                $stmt->execute([
-                    ':title' => $title,
-                    ':author' => $author,
-                    ':genre' => $genre
-                ]);
-                
-                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                
-                foreach ($books as &$book) {
-                    if (!empty($book['image_path'])) {
-                        $book['image_url'] = "/api/books?image=" . basename($book['image_path']);
-                    }
-                }
-                
-                echo json_encode($books);
-            } 
-            // Get all books
-            else {
-                if (isset($_GET['user_id'])) {
-                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE availability = 1 AND user_id <> 1");//i hard coded the uzser_iid to try it out
-                    $stmt->execute([$_GET['user_id']]);
-                } else {
-                    $stmt = $pdo->query("SELECT * FROM livre WHERE availability = 1");
-                }
-                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                
-                foreach ($books as &$book) {
-                    if (!empty($book['image_path'])) {
-                        $book['image_url'] = "/api/books?image=" . basename($book['image_path']);
-                    }
-                }
-                
-                echo json_encode($books);
-            }
-            break;*/
-            //we hardcoded into 1
+        
             case 'GET':
                 if (isset($_GET['own_books']) && $_GET['own_books'] === 'true') {
                     // Fetch the user's own books (for "My Library" page), hardcoded user_id = 1
