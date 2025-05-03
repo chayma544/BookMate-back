@@ -37,7 +37,7 @@ if (!$user || !password_verify($password, $user['password'])) {
 // Login successful
 $_SESSION['user_id'] = $user['user_id'];
 
-// Set a cookie with the user_id for session persistence (optional, if required)
+// Set a cookie with the user_id for session persistence
 setcookie('user_id', $user['user_id'], time() + 3600, "/"); // 1-hour expiration for the cookie
 
 http_response_code(200);
