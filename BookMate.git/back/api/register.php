@@ -1,7 +1,20 @@
 <?php
+session_start();
 require '../config/db.php';
 
-// Only allow POST requests
+// Set CORS headers for all responses
+header("Access-Control-Allow-Origin: http://localhost:4200");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
+header("Access-Control-Max-Age: 86400"); // Cache preflight response for 24 hours
+
+// Handle preflight OPTIONS request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit(); // Exit immediately after sending 200 OK
+}
+
+// Only allow POST requests for processing
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
@@ -50,10 +63,9 @@ if (strlen($password) < 8) {
     exit();
 }
 
-
 // Hash password
 $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-$imageURL = 'default_profile.jpg'; // Default profile image
+$imageURL = 'default_profile.jpg';
 
 // Insert user
 try {
@@ -63,15 +75,16 @@ try {
     
     $userId = $pdo->lastInsertId();
     
+    $_SESSION['user_id'] = $userId;
+    setcookie('user_id', $userId, time() + 3600, "/");
+
     http_response_code(201);
     echo json_encode([
         'message' => 'Registration successful',
-    
+        'user_id' => $userId
     ]);
-    //add cookie or redirect to login or copy code from login and redirect 
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Registration failed']);
-    //add messages for exceptions
+    echo json_encode(['error' => 'Registration failed: ' . $e->getMessage()]);
 }
 ?>

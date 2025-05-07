@@ -2,8 +2,10 @@
 
 session_start();
 
-if(!isset($_SESSION)){
-    header('location:login.php');
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401); // Return JSON error instead of redirect
+    echo json_encode(['error' => 'Unauthorized - Please log in']);
+    exit;
 }
 
 header('Content-Type: application/json'); // Force JSON response
