@@ -1,29 +1,21 @@
 <?php 
 
 header("Access-Control-Allow-Origin: http://localhost:4200");
-header("Access-Control-Allow-Origin: *"); 
+header("Access-Control-Allow-Credentials: true");
 header("Content-Type: application/json");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
-header('Content-Type: application/json'); // Force JSON response
-error_reporting(E_ALL); // Show all errors
-ini_set('display_errors', 1);
+
 session_start();
-
-if (!isset($_SESSION['user_id'])) {
-    http_response_code(401); // Return JSON error instead of redirect
-    echo json_encode(['error' => 'Unauthorized - Please log in']);
-    exit;
-}
-
-
-
+error_log('Session user_id in users.php: ' . ($_SESSION['user_id'] ?? 'not set'));
+error_log('Session ID in users.php: ' . session_id());
+error_log('Cookies received in users.php: ' . json_encode($_COOKIE));
+error_log('Request headers in users.php: ' . json_encode(getallheaders()));
 
 require_once __DIR__ . '/../config/db.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(response_code: 200);
+    http_response_code(200);
     exit();
 }
 
@@ -32,13 +24,6 @@ $method = $_SERVER['REQUEST_METHOD'];
 try {
     switch ($method) {
         case 'GET':
-            $id = isset($_GET['user_id']) ? (int)$_GET['user_id'] : null;
-            if (!$id) {
-                http_response_code(400);
-                echo json_encode(['error' => 'Missing user_id parameter']);
-                exit;
-            }
-
             if (!isset($_SESSION['user_id'])) {
                 error_log('Unauthorized access attempt to users.php');
                 http_response_code(401);
@@ -46,6 +31,7 @@ try {
                 exit;
             }
 
+            $id = $_SESSION['user_id'];
             $stmt = $pdo->prepare("SELECT user_id, firstName, lastName, email, age, address, user_swap_score FROM user WHERE user_id = ?");
             $stmt->execute([$id]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
