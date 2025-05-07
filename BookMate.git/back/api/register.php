@@ -1,12 +1,15 @@
 <?php
-session_start();
-require '../config/db.php';
 
 // Set CORS headers for all responses
 header("Access-Control-Allow-Origin: http://localhost:4200");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 header("Access-Control-Max-Age: 86400"); // Cache preflight response for 24 hours
+
+
+session_start();
+require '../config/db.php';
+
 
 // Handle preflight OPTIONS request
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -23,7 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
-
+$email = trim($input['email'] ?? '');
+$password = $input['password'] ?? '';
 // Validate input
 if (empty($input['firstName']) || empty($input['lastName']) || empty($input['email']) || 
     empty($input['password']) || empty($input['address']) || empty($input['age'])) {
