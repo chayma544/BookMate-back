@@ -1,14 +1,20 @@
 <?php
 
+// Set CORS headers for all responses
+header("Access-Control-Allow-Origin: http://localhost:4200");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
+header("Access-Control-Max-Age: 86400"); // Cache preflight response for 24 hours
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-header("Content-Type: application/json"); // Ensure JSON output
 
-require '/../config/db.php';
+session_start();
+require '../config/db.php';
+error_log('Database connection successful');
 
-// Only allow POST requests
+// Handle preflight OPTIONS request
+
+
+// Only allow POST requests for processing
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
@@ -17,7 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
-
+$email = trim($input['email'] ?? '');
+$password = $input['password'] ?? '';
 // Validate input
 if (empty($input['firstName']) || empty($input['lastName']) || empty($input['email']) || 
     empty($input['password']) || empty($input['address']) || empty($input['age'])) {
@@ -57,10 +64,9 @@ if (strlen($password) < 8) {
     exit();
 }
 
-
 // Hash password
 $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-$imageURL = 'default_profile.jpg'; // Default profile image
+$imageURL = 'default_profile.jpg';
 
 // Insert user
 try {
@@ -70,15 +76,16 @@ try {
     
     $userId = $pdo->lastInsertId();
     
+    $_SESSION['user_id'] = $userId;
+    setcookie('user_id', $userId, time() + 3600, "/");
+
     http_response_code(201);
     echo json_encode([
         'message' => 'Registration successful',
-    
+        'user_id' => $userId
     ]);
-    //add cookie or redirect to login or copy code from login and redirect 
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Registration failed']);
-    //add messages for exceptions
+    echo json_encode(['error' => 'Registration failed: ' . $e->getMessage()]);
 }
 ?>

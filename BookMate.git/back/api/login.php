@@ -1,47 +1,89 @@
 <?php
-require '../config/db.php';
+// Set headers before any output
+header("Access-Control-Allow-Origin: http://localhost:4200");
+header("Access-Control-Allow-Credentials: true");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
+header("Content-Type: application/json");
+header("Access-Control-Max-Age: 86400");
 
+// Ensure session is started after headers
 session_start();
+error_log('Session ID before login: ' . session_id());
+error_log('Cookies sent to login.php: ' . json_encode($_COOKIE));
+error_log('Request method: ' . $_SERVER['REQUEST_METHOD']);
+error_log('Request body: ' . file_get_contents('php://input'));
 
-// Only allow POST requests
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['error' => 'Method not allowed']);
+// Handle preflight OPTIONS request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
     exit();
 }
 
-// Get JSON input
-$input = json_decode(file_get_contents('php://input'), true);
+// Validate request method
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    $response = ['error' => 'Method not allowed'];
+    http_response_code(405);
+    echo json_encode($response);
+    exit();
+}
 
-// Validate input
+// Process the login request
+$input = json_decode(file_get_contents('php://input'), true);
+error_log('Decoded input: ' . json_encode($input));
+
 if (empty($input['email']) || empty($input['password'])) {
+    $response = ['error' => 'Email and password are required'];
+    error_log('Validation failed: ' . json_encode($response));
     http_response_code(400);
-    echo json_encode(['error' => 'Email and password are required']);
+    echo json_encode($response);
     exit();
 }
 
 $email = trim($input['email']);
 $password = $input['password'];
+error_log("Processing login for email: $email");
 
-// Check user exists
-$stmt = $pdo->prepare("SELECT * FROM user WHERE email = ?");
-$stmt->execute([$email]);
-$user = $stmt->fetch();
+try {
+    require_once __DIR__ . '/../config/db.php';
+    error_log('Database connection successful'); 
+    $stmt = $pdo->prepare("SELECT * FROM user WHERE LOWER(email) = LOWER(?)");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    error_log('Database query result: ' . json_encode($user));
 
-if (!$user || !password_verify($password, $user['password'])) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Invalid email or password']);
-    exit();
+    if ($user && password_verify($password, $user['password'])) {
+        $_SESSION['user_id'] = $user['user_id'];
+        session_regenerate_id(true);
+        setcookie('PHPSESSID', session_id(), [
+            'expires' => time() + 3600,
+            'path' => '/',
+            'domain' => '',
+            'secure' => false, // Set to true in production with HTTPS
+            'httponly' => true,
+            'samesite' => 'None' // Required for cross-origin with credentials
+        ]);
+        error_log('Login successful, user_id: ' . $user['user_id']);
+        error_log('Session ID after login: ' . session_id());
+
+        $response = [
+            'message' => 'Login successful',
+            'user_id' => $user['user_id']
+        ];
+        http_response_code(200);
+        echo json_encode($response);
+    } else {
+        $response = ['error' => 'Invalid email or password'];
+        error_log('Login failed: ' . json_encode($response) . ' for email: ' . $email);
+        http_response_code(401);
+        echo json_encode($response);
+    }
+} // Ensure the try block is properly closed
+catch (PDOException $e) {
+
+    error_log('PDOException DETAILS: ' . $e->getMessage()); // Log full error
+    $response = ['error' => 'Login failed: Database error - ' . $e->getMessage()];
+    http_response_code(500);
+    echo json_encode($response);
 }
-
-// Login successful
-$_SESSION['user_id'] = $user['user_id'];
-
-// Set a cookie with the user_id for session persistence
-setcookie('user_id', $user['user_id'], time() + 3600, "/"); // 1-hour expiration for the cookie
-
-http_response_code(200);
-echo json_encode([
-    'message' => 'Login successful'
-]);
 ?>

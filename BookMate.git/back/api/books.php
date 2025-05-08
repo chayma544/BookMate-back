@@ -20,9 +20,20 @@ session_start();
 define('UPLOAD_DIR', __DIR__ . '/../uploads/');
 define('MAX_FILE_SIZE', 2 * 1024 * 1024); // 2MB
 
-// Set CORS headers for Angular frontend
-header("Access-Control-Allow-Origin: https://localhost:4200");
+// Create secure upload directory
+if (!file_exists(UPLOAD_DIR)) {
+    mkdir(UPLOAD_DIR, 0755, true);
+    file_put_contents(UPLOAD_DIR . '.htaccess', "Deny from all");
+}
+
+// Security headers
 header("Content-Type: application/json");
+header("X-Content-Type-Options: nosniff");
+header("X-Frame-Options: DENY");
+header("X-XSS-Protection: 1; mode=block");
+
+// CORS for Angular frontend
+header("Access-Control-Allow-Origin: http://localhost:4200");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Access-Control-Allow-Credentials: true");

@@ -1,24 +1,21 @@
 <?php 
 
-session_start();
-
-if(!isset($_SESSION)){
-    header('location:login.php');
-}
-
-header('Content-Type: application/json'); // Force JSON response
-error_reporting(E_ALL); // Show all errors
-ini_set('display_errors', 1);
-
-header("Access-Control-Allow-Origin: *"); 
+header("Access-Control-Allow-Origin: http://localhost:4200");
+header("Access-Control-Allow-Credentials: true");
 header("Content-Type: application/json");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
+
+session_start();
+error_log('Session user_id in users.php: ' . ($_SESSION['user_id'] ?? 'not set'));
+error_log('Session ID in users.php: ' . session_id());
+error_log('Cookies received in users.php: ' . json_encode($_COOKIE));
+error_log('Request headers in users.php: ' . json_encode(getallheaders()));
 
 require_once __DIR__ . '/../config/db.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(response_code: 200);
+    http_response_code(200);
     exit();
 }
 
@@ -27,21 +24,26 @@ $method = $_SERVER['REQUEST_METHOD'];
 try {
     switch ($method) {
         case 'GET':
-            //  show profile info 
-            if (isset($_SESSION['user_id'])) {
-                $id= $_SESSION['user_id'];
-                error_log("Received user_id: " . $id); // Debug log error?
-                $stmt = $pdo->prepare("SELECT * FROM user WHERE user_id = ?");
-                $stmt->execute([$id]);
-                $user = $stmt->fetch(mode: PDO::FETCH_ASSOC);
-                error_log("Fetched user: " . json_encode($user)); // Debug log
-                if ($user) {
-                    echo json_encode($user);
-                } else {
-                    http_response_code(404);
-                    echo json_encode(['error' => 'User not found']);
-                }
-            } 
+            if (!isset($_SESSION['user_id'])) {
+                error_log('Unauthorized access attempt to users.php');
+                http_response_code(401);
+                echo json_encode(['error' => 'Unauthorized - Please log in']);
+                exit;
+            }
+
+            $id = $_SESSION['user_id'];
+            $stmt = $pdo->prepare("SELECT user_id, firstName, lastName, email, age, address, user_swap_score FROM user WHERE user_id = ?");
+            $stmt->execute([$id]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($user) {
+                error_log('User data fetched successfully for user_id: ' . $id);
+                echo json_encode($user);
+            } else {
+                error_log('User not found for user_id: ' . $id);
+                http_response_code(404);
+                echo json_encode(['error' => 'User not found']);
+            }
             break;
 
     
