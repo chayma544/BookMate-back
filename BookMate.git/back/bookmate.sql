@@ -1,3 +1,7 @@
+DROP DATABASE IF EXISTS bookmate;
+CREATE DATABASE bookmate;
+USE bookmate;
+
 CREATE TABLE `user` (
   `user_id` int(11) NOT NULL AUTO_INCREMENT,
   `FirstName` varchar(50) NOT NULL,
@@ -8,7 +12,7 @@ CREATE TABLE `user` (
   `email` varchar(50) NOT NULL UNIQUE,
   `password` varchar(50) NOT NULL,
   `imageURL` varchar(255) DEFAULT NULL,
-  PRIMARY KEY (`user_id`)/* we need to add a role attribute and  */
+  PRIMARY KEY (`user_id`) /*we need to add a role attribute and  */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /* esm taswira random  */
 CREATE TABLE `livre` (
@@ -37,6 +41,7 @@ CREATE TABLE `requests` (
   `datedeb` date DEFAULT NULL,
   `durée` int(11) DEFAULT NULL,
   `reasonText` varchar(255) DEFAULT NULL,
+  `owner_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`request_id`),
   KEY `requester_id` (`requester_id`),
   KEY `book_id` (`book_id`),

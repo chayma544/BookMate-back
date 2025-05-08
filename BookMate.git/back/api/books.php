@@ -1,32 +1,30 @@
 <?php
-// Start session securely
+
+/**
+ * Book API with Role-Based Access Control
+ * 
+ * Features:
+ * - Session-based authentication
+ * - Role-based permissions (admin/user)
+ * - Rate limiting
+ * - Input sanitization
+ * - CORS support
+ * - Image handling
+ */
+
+// Start session to track logged-in users
 session_start();
-session_regenerate_id(true);
 
 // Configuration
-define('ENVIRONMENT', getenv('ENVIRONMENT') ?: 'production');
-define('UPLOAD_DIR', realpath(__DIR__ . '/../uploads/') . '/');
+
+define('UPLOAD_DIR', __DIR__ . '/../uploads/');
 define('MAX_FILE_SIZE', 2 * 1024 * 1024); // 2MB
-define('ALLOWED_MIME_TYPES', ['image/jpeg', 'image/png', 'image/gif']);
-define('ALLOWED_EXTENSIONS', ['jpg', 'jpeg', 'png', 'gif']);
-define('RATE_LIMIT', 100); // Requests per minute
 
-// Create secure upload directory
-if (!file_exists(UPLOAD_DIR)) {
-    mkdir(UPLOAD_DIR, 0755, true);
-    file_put_contents(UPLOAD_DIR . '.htaccess', "Deny from all");
-}
-
-// Security headers
-header("Content-Type: application/json");
-header("X-Content-Type-Options: nosniff");
-header("X-Frame-Options: DENY");
-header("X-XSS-Protection: 1; mode=block");
-
-// CORS for Angular frontend
+// Set CORS headers for Angular frontend
 header("Access-Control-Allow-Origin: https://localhost:4200");
+header("Content-Type: application/json");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-Token");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Access-Control-Allow-Credentials: true");
 header("Access-Control-Max-Age: 86400");
 
@@ -34,25 +32,9 @@ header("Access-Control-Max-Age: 86400");
 require_once __DIR__ . '/../config/db.php';
 
 /**
- * Generate CSRF token
- */
-function generateCsrfToken(): string {
-    if (empty($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
-    return $_SESSION['csrf_token'];
-}
-
-/**
- * Verify CSRF token
- */
-function verifyCsrfToken(string $token): bool {
-    return isset($_SESSION['csrf_token']) && 
-           hash_equals($_SESSION['csrf_token'], $token);
-}
-
-/**
- * Sanitize input data
+ * Sanitize input data to prevent XSS attacks
+ * @param mixed $data Input data to sanitize
+ * @return mixed Sanitized data
  */
 function sanitizeInput($data) {
     if (is_array($data)) {
@@ -62,61 +44,23 @@ function sanitizeInput($data) {
 }
 
 /**
- * Validate and handle file upload
- * @return string The filename of the uploaded file
+ * Normalize book data structure for consistent API responses
+ * @param array $book Book data from database
+ * @return array Normalized book data
  */
-function handleFileUpload(array $file): string {
-    // Error check
-    if ($file['error'] !== UPLOAD_ERR_OK) {
-        throw new RuntimeException('Upload error: ' . $file['error']);
-    }
-
-    // Size validation
-    if ($file['size'] > MAX_FILE_SIZE) {
-        throw new RuntimeException('File exceeds 2MB limit');
-    }
-
-    // MIME type validation
-    $finfo = new finfo(FILEINFO_MIME_TYPE);
-    $mime = $finfo->file($file['tmp_name']);
-    if (!in_array($mime, ALLOWED_MIME_TYPES)) {
-        throw new RuntimeException('Invalid file type');
-    }
-
-    // Extension validation
-    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-    if (!in_array($ext, ALLOWED_EXTENSIONS)) {
-        throw new RuntimeException('Invalid file extension');
-    }
-
-    // Generate secure filename
-    $filename = bin2hex(random_bytes(16)) . '.' . $ext;
-    $destination = UPLOAD_DIR . $filename;
-
-    // Move file
-    if (!move_uploaded_file($file['tmp_name'], $destination)) {
-        throw new RuntimeException('Failed to save file');
-    }
-
-    return $filename;
-}
-
-/**
- * Apply rate limiting
- */
-function applyRateLimiting(string $key): void {
-    $currentMinute = (int)(time() / 60);
-    $rateLimitKey = 'rate_' . $key . '_' . $currentMinute;
-
-    if (!isset($_SESSION[$rateLimitKey])) {
-        $_SESSION[$rateLimitKey] = 0;
-    }
-
-    if (++$_SESSION[$rateLimitKey] > RATE_LIMIT) {
-        http_response_code(429);
-        echo json_encode(['error' => 'Too many requests']);
-        exit();
-    }
+function normalizeBook(array $book): array {
+    return [
+        'id' => $book['book_id'],
+        'title' => $book['title'],
+        'author' => $book['author_name'],
+        'language' => $book['language'],
+        'genre' => $book['genre'],
+        'releaseDate' => $book['release_date'],
+        'status' => $book['status'],
+        'coverImage' => $book['URL'],
+        'availability' => (bool) $book['availability'],
+        'userId' => $book['user_id']
+    ];
 }
 
 // Handle preflight OPTIONS requests
@@ -125,327 +69,332 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-// Authentication check
-$method = $_SERVER['REQUEST_METHOD'];
-$current_user_id = $_SESSION['user_id'] ?? null;
-$current_user_role = $_SESSION['role'] ?? 'user';
-
-if ($method !== 'GET' && !$current_user_id) {
+// Authentication Check - All endpoints require authentication
+if (!isset($_SESSION['user_id'])) {
     http_response_code(401);
-    echo json_encode(['error' => 'Authentication required']);
+    echo json_encode(['error' => 'Unauthorized - Please log in']);
     exit();
 }
 
-// Apply rate limiting for authenticated users
-if ($current_user_id) {
-    applyRateLimiting('user_' . $current_user_id);
+$current_user_id = $_SESSION['user_id'];
+
+/**
+ * Rate Limiting (100 requests per minute per user)
+ */
+
+
+// Get user role from database
+try {
+    $stmt = $pdo->prepare("SELECT role FROM users WHERE user_id = ?");
+    $stmt->execute([$current_user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$user) {
+        http_response_code(401);
+        echo json_encode(['error' => 'User not found']);
+        exit();
+    }
+    
+    $isAdmin = ($user['role'] === 'admin');
+} catch (PDOException $e) {
+    http_response_code(500);
+    echo json_encode(['error' => 'Database error while checking user role']);
+    exit();
 }
 
-// Main API Handler
+/**
+ * Image Request Handler - Public endpoint (doesn't require auth)
+ */
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['image'])) {
+    $imagePath = realpath(UPLOAD_DIR . sanitizeInput($_GET['image']));
+    
+    // Security check to prevent directory traversal
+    if (strpos($imagePath, realpath(UPLOAD_DIR)) !== 0) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Forbidden']);
+        exit();
+    }
+    
+    if (file_exists($imagePath)) {
+        $mimeType = mime_content_type($imagePath);
+        header('Content-Type: ' . $mimeType);
+        readfile($imagePath);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Image not found']);
+    }
+    exit();
+}
+
+// Main request handler
 try {
+    $method = $_SERVER['REQUEST_METHOD'];
+    
     switch ($method) {
         case 'GET':
-            // Get single book
-            if (isset($_GET['id'])) {
+            /**
+             * GET Endpoints:
+             * - Get user's own books (for "My Library")
+             * - Get specific book details
+             * - Search books
+             * - Get discoverable books (not owned by user)
+             */
+            
+            if (isset($_GET['own_books']) && $_GET['own_books'] === 'true') {
+                // Get user's own books
+                if ($isAdmin) {
+                    $stmt = $pdo->query("SELECT * FROM livre");
+                } else {
+                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE user_id = ?");
+                    $stmt->execute([$current_user_id]);
+                }
+                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                echo json_encode(array_map('normalizeBook', $books));
+            } 
+            elseif (isset($_GET['book_id'])) {
+                // Get specific book details
                 $stmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
-                $stmt->execute([$_GET['id']]);
+                $stmt->execute([$_GET['book_id']]);
                 $book = $stmt->fetch(PDO::FETCH_ASSOC);
-
+                
                 if (!$book) {
                     http_response_code(404);
                     echo json_encode(['error' => 'Book not found']);
                     break;
                 }
+                
+                // Check permissions
+                if (!$isAdmin && $book['user_id'] != $current_user_id && !$book['availability']) {
+                    http_response_code(403);
+                    echo json_encode(['error' => 'Access denied']);
+                    break;
+                }
+                
+                echo json_encode(normalizeBook($book));
+            }
+            elseif (isset($_GET['title']) || isset($_GET['genre']) || isset($_GET['author'])) {
+                // Search books with filters
+                $title = isset($_GET['title']) ? "%".sanitizeInput($_GET['title'])."%" : "%";
+                $genre = isset($_GET['genre']) ? sanitizeInput($_GET['genre']) : "%";
+                $author = isset($_GET['author']) ? "%".sanitizeInput($_GET['author'])."%" : "%";
 
-                // Add image URL if exists
-                if (!empty($book['image_path'])) {
-                    $book['image_url'] = "/books/image/" . basename($book['image_path']);
+                if ($isAdmin) {
+                    $query = "SELECT * FROM livre WHERE (title LIKE :title AND author_name LIKE :author AND genre LIKE :genre)";
+                } else {
+                    $query = "SELECT * FROM livre WHERE (title LIKE :title AND author_name LIKE :author AND genre LIKE :genre AND (user_id != :user_id AND availability = 1))";
                 }
 
-                echo json_encode(['data' => $book]);
-                break;
-            }
-            
-            // Search books
-            if (isset($_GET['search'])) {
-                $search = '%' . sanitizeInput($_GET['search']) . '%';
-                $stmt = $pdo->prepare("
-                    SELECT * FROM livre 
-                    WHERE (title LIKE ? OR author_name LIKE ? OR genre LIKE ?)
-                    AND availability = 1
-                    " . ($current_user_id ? "AND user_id != ?" : "") . "
-                    LIMIT 50
-                ");
-
-                $params = [$search, $search, $search];
-                if ($current_user_id) {
-                    $params[] = $current_user_id;
+                $stmt = $pdo->prepare($query);
+                $params = [
+                    ':title' => $title,
+                    ':author' => $author,
+                    ':genre' => $genre
+                ];
+                
+                if (!$isAdmin) {
+                    $params[':user_id'] = $current_user_id;
                 }
 
                 $stmt->execute($params);
                 $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-                // Add image URLs
-                foreach ($books as &$book) {
-                    if (!empty($book['image_path'])) {
-                        $book['image_url'] = "/books/image/" . basename($book['image_path']);
-                    }
+                echo json_encode(array_map('normalizeBook', $books));
+            } 
+            else {
+                // Default case - Get discoverable books (not owned by user)
+                if ($isAdmin) {
+                    $stmt = $pdo->query("SELECT * FROM livre");
+                } else {
+                    $stmt = $pdo->prepare("SELECT * FROM livre WHERE user_id != ? AND availability = 1");
+                    $stmt->execute([$current_user_id]);
                 }
-
-                echo json_encode(['data' => $books]);
-                break;
+                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                echo json_encode(array_map('normalizeBook', $books));
             }
-            
-            // Get all books
-            $query = "SELECT * FROM livre";
-            $params = [];
-            
-            if ($current_user_role !== 'admin') {
-                $query .= " WHERE availability = 1";
-                if ($current_user_id) {
-                    $query .= " AND user_id != ?";
-                    $params[] = $current_user_id;
-                }
-            }
-
-            $stmt = $pdo->prepare($query);
-            $stmt->execute($params);
-            $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            
-            foreach ($books as &$book) {
-                if (!empty($book['image_path'])) {
-                    $book['image_url'] = "/books/image/" . basename($book['image_path']);
-                }
-            }
-
-            echo json_encode(['data' => $books]);
             break;
 
         case 'POST':
-            // Verify CSRF token
-            $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($_POST['csrf_token'] ?? '');
-            if (!verifyCsrfToken($csrfToken)) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Invalid CSRF token']);
+            /**
+             * Add a new book
+             * Accessible to both admin and regular users
+             */
+            $requestData = json_decode(file_get_contents("php://input"), true);
+
+            // Validate required fields
+            if (empty($requestData['title']) || empty($requestData['authorName']) || empty($requestData['coverImage'])) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Title and author name are required']);
                 break;
             }
 
-            // Get and validate input
-            $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
-            $isJson = strpos($contentType, 'application/json') !== false;
+            // Prepare book data
+            $title = sanitizeInput($requestData['title']);
+            $authorName = sanitizeInput($requestData['authorName']);
+            $availability = isset($requestData['availability']) ? (int) $requestData['availability'] : 1;
             
-            if ($isJson) {
-                $requestData = json_decode(file_get_contents('php://input'), true);
-                $imageData = null;
-            } else {
-                $requestData = $_POST;
-                $imageData = $_FILES['image'] ?? null;
-            }
-
-            $requestData = sanitizeInput($requestData);
-
-            // Validate required fields
-            $required = ['title', 'author_name'];
-            foreach ($required as $field) {
-                if (empty($requestData[$field])) {
-                    http_response_code(400);
-                    echo json_encode(['error' => "Missing required field: $field"]);
-                    break 2;
-                }
-            }
-
-            // Start transaction
-            $pdo->beginTransaction();
-
             try {
-                // Check for duplicate
                 $stmt = $pdo->prepare("
-                    SELECT 1 FROM livre 
-                    WHERE title = ? AND author_name = ? AND user_id = ?
+                    INSERT INTO livre 
+                    (title, author_name, language, genre, release_date, status, URL, dateAjout, availability, user_id) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
                 ");
+
                 $stmt->execute([
-                    $requestData['title'],
-                    $requestData['author_name'],
+                    $title,
+                    $authorName,
+                    sanitizeInput($requestData['language'] ?? 'Unknown'),
+                    sanitizeInput($requestData['genre'] ?? 'Other'),
+                    sanitizeInput($requestData['releaseDate'] ?? null),
+                    sanitizeInput($requestData['status'] ?? 'good'),
+                    sanitizeInput($requestData['coverImage'] ),
+                    $availability,
                     $current_user_id
                 ]);
 
-                if ($stmt->rowCount() > 0) {
-                    throw new RuntimeException('Book already exists');
-                }
-
-                // Handle image upload
-                $imagePath = null;
-                if ($imageData && $imageData['error'] === UPLOAD_ERR_OK) {
-                    $filename = handleFileUpload($imageData);
-                    $imagePath = 'uploads/' . $filename;
-                }
-
-                // Insert book
-                $stmt = $pdo->prepare("
-                    INSERT INTO livre (
-                        title, author_name, language, genre, 
-                        release_date, status, dateAjout, 
-                        availability, user_id, image_path
-                    ) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
-                ");
-
-                $stmt->execute([
-                    $requestData['title'],
-                    $requestData['author_name'],
-                    $requestData['language'] ?? 'Unknown',
-                    $requestData['genre'] ?? 'Other',
-                    $requestData['release_date'] ?? null,
-                    $requestData['status'] ?? 'good',
-                    $requestData['availability'] ?? 1,
-                    $current_user_id,
-                    $imagePath
-                ]);
-
+                // Return the created book
                 $bookId = $pdo->lastInsertId();
-                $pdo->commit();
-
-                // Return created book
                 $stmt = $pdo->prepare("SELECT * FROM livre WHERE book_id = ?");
                 $stmt->execute([$bookId]);
-                $book = $stmt->fetch(PDO::FETCH_ASSOC);
-
-                if (!empty($book['image_path'])) {
-                    $book['image_url'] = "/books/image/" . basename($book['image_path']);
-                }
+                $newBook = $stmt->fetch(PDO::FETCH_ASSOC);
 
                 http_response_code(201);
                 echo json_encode([
-                    'data' => $book,
-                    'message' => 'Book created successfully'
+                    'book' => normalizeBook($newBook),
+                    'message' => 'Book added successfully'
                 ]);
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                if (isset($filename)) {
-                    @unlink(UPLOAD_DIR . $filename);
-                }
-                http_response_code(400);
-                echo json_encode(['error' => $e->getMessage()]);
+            } catch (PDOException $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to add book', 'details' => $e->getMessage()]);
             }
             break;
 
         case 'PUT':
-            // Verify CSRF token
-            $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-            if (!verifyCsrfToken($csrfToken)) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Invalid CSRF token']);
-                break;
-            }
-
-            $requestData = json_decode(file_get_contents('php://input'), true);
-            $requestData = sanitizeInput($requestData);
-
+            /**
+             * Update an existing book
+             * Users can only update their own books
+             * Admins can update any book
+             */
+            $requestData = sanitizeInput(json_decode(file_get_contents("php://input"), true));
+            
             if (empty($requestData['book_id'])) {
                 http_response_code(400);
-                echo json_encode(['error' => 'Book ID required']);
+                echo json_encode(['error' => 'Book ID is required']);
                 break;
             }
 
-            $pdo->beginTransaction();
+            // Verify book exists and check ownership
+            $stmt = $pdo->prepare("SELECT user_id FROM livre WHERE book_id = ?");
+            $stmt->execute([$requestData['book_id']]);
+            $book = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$book) {
+                http_response_code(404);
+                echo json_encode(['error' => 'Book not found']);
+                break;
+            }
+            
+            // Check permissions
+            if (!$isAdmin && $book['user_id'] != $current_user_id) {
+                http_response_code(403);
+                echo json_encode(['error' => 'You can only modify your own books']);
+                break;
+            }
 
+            // Prepare update fields
+            $updateFields = [];
+            $params = [];
+            
+            $allowedFields = [
+                'title', 'author_name', 'language', 'genre',
+                'release_date', 'status', 'availability', 'URL'
+            ];
+        
+            foreach ($allowedFields as $field) {
+                if (isset($requestData[$field])) {
+                    $updateFields[] = "`$field` = ?";
+                    $params[] = sanitizeInput($requestData[$field]);
+                }
+            }
+        
+            if (empty($updateFields)) {
+                http_response_code(400);
+                echo json_encode(['error' => 'No valid fields provided for update']);
+                break;
+            }
+        
+            $params[] = $requestData['book_id'];
+        
+            // Execute update
             try {
-                // Verify ownership
-                $stmt = $pdo->prepare("
-                    SELECT image_path FROM livre 
-                    WHERE book_id = ? AND user_id = ?
-                    FOR UPDATE
-                ");
-                $stmt->execute([$requestData['book_id'], $current_user_id]);
-                $current = $stmt->fetch(PDO::FETCH_ASSOC);
-
-                if (!$current) {
-                    throw new RuntimeException('Book not found or access denied');
-                }
-
-                // Build update
-                $updates = [];
-                $params = [];
-                $allowedFields = [
-                    'title', 'author_name', 'language', 'genre',
-                    'release_date', 'status', 'availability'
-                ];
-
-                foreach ($allowedFields as $field) {
-                    if (array_key_exists($field, $requestData)) {
-                        $updates[] = "$field = ?";
-                        $params[] = $requestData[$field];
-                    }
-                }
-
-                if (empty($updates)) {
-                    throw new RuntimeException('No fields to update');
-                }
-
-                $params[] = $requestData['book_id'];
-
-                // Execute update
-                $query = "UPDATE livre SET " . implode(', ', $updates) . " WHERE book_id = ?";
+                $query = "UPDATE livre SET " . implode(', ', $updateFields) . " WHERE book_id = ?";
                 $stmt = $pdo->prepare($query);
                 $stmt->execute($params);
-
-                $pdo->commit();
-                echo json_encode(['message' => 'Book updated successfully']);
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                http_response_code(400);
-                echo json_encode(['error' => $e->getMessage()]);
+            
+                if ($stmt->rowCount() > 0) {
+                    echo json_encode(['message' => 'Book updated successfully']);
+                } else {
+                    http_response_code(404);
+                    echo json_encode(['error' => 'No changes made']);
+                }
+            } catch (PDOException $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to update book', 'details' => $e->getMessage()]);
             }
             break;
 
         case 'DELETE':
-            // Verify CSRF token
-            $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-            if (!verifyCsrfToken($csrfToken)) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Invalid CSRF token']);
-                break;
-            }
-
+            /**
+             * Delete a book
+             * Users can only delete their own books
+             * Admins can delete any book
+             */
             if (empty($_GET['id'])) {
                 http_response_code(400);
-                echo json_encode(['error' => 'Book ID required']);
+                echo json_encode(['error' => 'Book ID is required']);
                 break;
             }
 
-            $pdo->beginTransaction();
+            $bookId = sanitizeInput($_GET['id']);
 
+            // Verify book exists and check ownership
+            $stmt = $pdo->prepare("SELECT user_id, URL FROM livre WHERE book_id = ?");
+            $stmt->execute([$bookId]);
+            $book = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$book) {
+                http_response_code(404);
+                echo json_encode(['error' => 'Book not found']);
+                break;
+            }
+            
+            // Check permissions
+            if (!$isAdmin && $book['user_id'] != $current_user_id) {
+                http_response_code(403);
+                echo json_encode(['error' => 'You can only delete your own books']);
+                break;
+            }
+
+            // Delete book
             try {
-                // Verify ownership and get image path
-                $stmt = $pdo->prepare("
-                    SELECT image_path FROM livre 
-                    WHERE book_id = ? AND user_id = ?
-                    FOR UPDATE
-                ");
-                $stmt->execute([$_GET['id'], $current_user_id]);
-                $book = $stmt->fetch(PDO::FETCH_ASSOC);
-
-                if (!$book) {
-                    throw new RuntimeException('Book not found or access denied');
-                }
-
-                // Delete book
                 $stmt = $pdo->prepare("DELETE FROM livre WHERE book_id = ?");
-                $stmt->execute([$_GET['id']]);
-
-                // Delete image if exists
-                if (!empty($book['image_path'])) {
-                    $imageFile = UPLOAD_DIR . basename($book['image_path']);
-                    if (file_exists($imageFile)) {
-                        unlink($imageFile);
+                $stmt->execute([$bookId]);
+                
+                if ($stmt->rowCount() > 0) {
+                    // Delete associated image if exists
+                    if (!empty($book['URL'])) {
+                        $imagePath = realpath(UPLOAD_DIR . basename($book['URL']));
+                        if (file_exists($imagePath)) {
+                            unlink($imagePath);
+                        }
                     }
+                    
+                    echo json_encode(['message' => 'Book deleted successfully']);
+                } else {
+                    http_response_code(404);
+                    echo json_encode(['error' => 'Book not found']);
                 }
-
-                $pdo->commit();
-                echo json_encode(['message' => 'Book deleted successfully']);
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                http_response_code(400);
-                echo json_encode(['error' => $e->getMessage()]);
+            } catch (PDOException $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to delete book', 'details' => $e->getMessage()]);
             }
             break;
 
@@ -455,11 +404,13 @@ try {
     }
 } catch (PDOException $e) {
     http_response_code(500);
-    error_log("Database Error: " . $e->getMessage());
-    echo json_encode(['error' => 'Database error']);
+    echo json_encode([
+        'error' => 'Database error',
+    ]);
 } catch (Exception $e) {
     http_response_code(500);
-    error_log("Server Error: " . $e->getMessage());
-    echo json_encode(['error' => 'Server error']);
+    echo json_encode([
+        'error' => 'Server error',
+    ]);
 }
 ?>

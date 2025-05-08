@@ -12,7 +12,7 @@ $pass = '';
 $charset = 'utf8mb4';
 
 
-$dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+$dsn = "mysql:host=$host;dbname=$dbname;charset=$charset";
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -23,7 +23,8 @@ try {
     $pdo = new PDO("mysql:host=$host;dbname=$dbname", $user, $pass);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
-    die("database not found!!!!!!!!!!!!!!!!!");
-    die(json_encode(['error' => $e->getMessage()]));
+    http_response_code(500);
+    die(json_encode(['error' => 'Database connection failed: ' . $e->getMessage()]));
+    
 }
 ?>
