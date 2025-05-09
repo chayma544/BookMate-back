@@ -1,21 +1,8 @@
 <?php
 
-/**
- * Book API with Role-Based Access Control
- * 
- * Features:
- * - Session-based authentication
- * - Role-based permissions (admin/user)
- * - Rate limiting
- * - Input sanitization
- * - CORS support
- * - Image handling
- */
-
-// Start session to track logged-in users
 session_start();
 
-// Configuration
+
 
 define('UPLOAD_DIR', __DIR__ . '/../uploads/');
 define('MAX_FILE_SIZE', 2 * 1024 * 1024); // 2MB
@@ -41,6 +28,16 @@ header("Access-Control-Max-Age: 86400");
 
 // Database connection
 require_once __DIR__ . '/../config/db.php';
+
+$current_user_id = $_SESSION['user_id'] ?? null;
+$current_user_role = $_SESSION['role'] ?? 'user';
+
+if (!$current_user_id) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit();
+}
+
 
 /**
  * Sanitize input data to prevent XSS attacks
@@ -96,7 +93,7 @@ $current_user_id = $_SESSION['user_id'];
 
 // Get user role from database
 try {
-    $stmt = $pdo->prepare("SELECT role FROM users WHERE user_id = ?");
+    $stmt = $pdo->prepare("SELECT role FROM user WHERE user_id = ?");
     $stmt->execute([$current_user_id]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -231,7 +228,7 @@ try {
             $requestData = json_decode(file_get_contents("php://input"), true);
 
             // Validate required fields
-            if (empty($requestData['title']) || empty($requestData['authorName']) || empty($requestData['coverImage'])) {
+            if (empty($requestData['title']) || empty($requestData['authorName']) ) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Title and author name are required']);
                 break;
