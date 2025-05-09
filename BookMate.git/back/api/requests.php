@@ -13,23 +13,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
-// Helper function to normalize request data (for consistency with books.php)
+// Helper function to normalize request data
 function normalizeRequest($request) {
     return [
         'requestId' => $request['request_id'],
         'requesterId' => $request['requester_id'],
         'bookId' => $request['book_id'],
+        'ownerId' => $request['owner_id'],
         'type' => $request['type'],
         'status' => $request['status'],
         'datedeb' => $request['datedeb'],
-        'durée' => $request['durée'],
+        'duration' => $request['duration'],
         'reasonText' => $request['reasonText'],
         'bookTitle' => $request['title'] ?? null,
         'authorName' => $request['author_name'] ?? null,
-        'requesterFirstName' => $request['requester_first_name'] ?? $request['FirstName'] ?? null,
-        'requesterLastName' => $request['requester_last_name'] ?? $request['LastName'] ?? null,
-        'ownerFirstName' => $request['owner_first_name'] ?? $request['FirstName'] ?? null,
-        'ownerLastName' => $request['owner_last_name'] ?? $request['LastName'] ?? null,
+        'requesterFirstName' => $request['requester_first_name'] ?? null,
+        'requesterLastName' => $request['requester_last_name'] ?? null,
+        'ownerFirstName' => $request['owner_first_name'] ?? null,
+        'ownerLastName' => $request['owner_last_name'] ?? null,
     ];
 }
 
@@ -53,10 +54,9 @@ try {
                 $stmt = $pdo->prepare("SELECT * FROM requests WHERE request_id = ?");
                 $stmt->execute([$_GET['id']]);
                 $request = $stmt->fetch(PDO::FETCH_ASSOC);
-                
+        
                 if ($request) {
-                    $normalizedRequest = normalizeRequest($request);
-                    echo json_encode($normalizedRequest);
+                    echo json_encode(normalizeRequest($request));
                 } else {
                     http_response_code(404);
                     echo json_encode(['error' => 'Request not found']);
@@ -111,12 +111,11 @@ try {
 
         case 'POST':
             $data = json_decode(file_get_contents('php://input'), true);
-
             // Validate required fields
             if (
-                !isset($data['bookId']) || $data['bookId'] === '' ||
-                !isset($data['reasonText']) || trim($data['reasonText']) === '' ||
-                !isset($data['ownerEmail']) || trim($data['ownerEmail']) === ''
+                empty($data['bookId']) ||
+                empty($data['reasonText']) ||
+                empty($data['ownerId'])
             ) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Missing required fields']);
@@ -242,6 +241,8 @@ try {
                 http_response_code(200);
                 echo json_encode(['message' => 'No changes made']);
             }
+
+            echo json_encode(['message' => 'Request updated successfully']);
             break;
 
         case 'DELETE':
@@ -270,9 +271,9 @@ try {
             }
             
             $stmt = $pdo->prepare("DELETE FROM requests WHERE request_id = ?");
-            $stmt->execute([$requestId]);
-            
-            echo json_encode(['message' => 'Request canceled successfully']);
+            $stmt->execute([$_GET['id']]);
+
+            echo json_encode(['message' => 'Request deleted successfully']);
             break;
 
         default:
@@ -280,12 +281,8 @@ try {
             echo json_encode(['error' => 'Method not allowed']);
             break;
     }
-
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode([
-        'error' => 'Database error',
-        'message' => $e->getMessage()
-    ]);
+    echo json_encode(['error' => 'Database error', 'message' => $e->getMessage()]);
 }
 ?>

@@ -9,13 +9,10 @@ header("Access-Control-Max-Age: 86400"); // Cache preflight response for 24 hour
 
 session_start();
 require '../config/db.php';
-
+error_log('Database connection successful');
 
 // Handle preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit(); // Exit immediately after sending 200 OK
-}
+
 
 // Only allow POST requests for processing
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

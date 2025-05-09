@@ -244,40 +244,7 @@ function addSwapScore($userId) {
     $stmt = $pdo->prepare("UPDATE user SET user_swap_score = user_swap_score + 1 WHERE user_id = ?");
     $stmt->execute([$userId]);
 }
-function updatePdp($user_id) {
-    global $pdo;
-        // simple , amloulha api endpoint wahadha mathabik 
-        //echo  updatePdp($_SESSION['user_id']); fel api eli ybadel taswira 
-    if (isset($_FILES['image']) && $_FILES['image']['error'] === 0) {
-        $imageName = basename($_FILES['image']['name']);
-        $uploadDir = 'images/';
-        $targetPath = $uploadDir . $imageName;
 
-        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-        $fileType = mime_content_type($_FILES['image']['tmp_name']);
-
-        if (in_array($fileType, $allowedTypes)) {
-            if (move_uploaded_file($_FILES['image']['tmp_name'], $targetPath)) {
-                try {
-                    $stmt = $pdo->prepare('UPDATE user SET imageURL = :imageURL WHERE user_id = :user_id');
-                    $stmt->execute([
-                        'imageURL' => $targetPath,
-                        'user_id' => $user_id
-                    ]);
-                    return "Image ajoutée avec succès.";
-                } catch (Exception $e) {
-                    return "Erreur lors de l'ajout : " . $e->getMessage();
-                }
-            } else {
-                return "Échec du téléchargement de l'image.";
-            }
-        } else {
-            return "Type d'image non autorisé (JPG, PNG, GIF uniquement).";
-        }
-    } else {
-        return "Veuillez sélectionner une image.";
-    }
-}
 // change me 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action']) && $_GET['action'] === 'updatepdp') {
     $message = updatePdp($_SESSION['user_id']);
