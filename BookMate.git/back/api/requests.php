@@ -33,6 +33,18 @@ function normalizeRequest($request) {
     ];
 }
 
+session_start();
+error_log('Session ID in requests.php: ' . session_id());
+error_log('SESSION data: ' . json_encode($_SESSION));
+
+// Check if user is authenticated
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Not authenticated']);
+    exit();
+}
+$authenticatedUserId = $_SESSION['user_id'];
+
 try {
     switch ($method) {
         case 'GET':
@@ -50,7 +62,7 @@ try {
                     echo json_encode(['error' => 'Request not found']);
                 }
             }
-            // Get requests by user ID (as requester), hardcoded requester_id = 1
+            // Get requests by user ID (as requester)
             elseif (isset($_GET['user_id'])) {
                 $stmt = $pdo->prepare("
                     SELECT r.*, l.title, l.author_name, u.FirstName, u.LastName 
@@ -59,12 +71,12 @@ try {
                     JOIN user u ON l.user_id = u.user_id
                     WHERE r.requester_id = ?
                 ");
-                $stmt->execute([1]); // Hardcoded requester_id = 1
+                $stmt->execute([$authenticatedUserId]);
                 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 $normalizedRequests = array_map('normalizeRequest', $requests);
                 echo json_encode($normalizedRequests);
             }
-            // Get requests for books owned by a specific user, hardcoded owner_id = 1
+            // Get requests for books owned by the authenticated user
             elseif (isset($_GET['owner_id'])) {
                 $stmt = $pdo->prepare("
                     SELECT r.*, l.title, l.author_name, u.FirstName, u.LastName 
@@ -73,14 +85,14 @@ try {
                     JOIN user u ON r.requester_id = u.user_id
                     WHERE l.user_id = ?
                 ");
-                $stmt->execute([1]); // Hardcoded owner_id = 1
+                $stmt->execute([$authenticatedUserId]);
                 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 $normalizedRequests = array_map('normalizeRequest', $requests);
                 echo json_encode($normalizedRequests);
             }
-            // Get all requests
+            // Get all requests (only for authenticated user, if authorized)
             else {
-                $stmt = $pdo->query("
+                $stmt = $pdo->prepare("
                     SELECT r.*, l.title, l.author_name, 
                            requester.FirstName as requester_first_name, requester.LastName as requester_last_name,
                            owner.FirstName as owner_first_name, owner.LastName as owner_last_name
@@ -88,7 +100,9 @@ try {
                     JOIN livre l ON r.book_id = l.book_id
                     JOIN user requester ON r.requester_id = requester.user_id
                     JOIN user owner ON l.user_id = owner.user_id
+                    WHERE r.requester_id = ? OR l.user_id = ?
                 ");
+                $stmt->execute([$authenticatedUserId, $authenticatedUserId]);
                 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 $normalizedRequests = array_map('normalizeRequest', $requests);
                 echo json_encode($normalizedRequests);
@@ -98,7 +112,7 @@ try {
         case 'POST':
             $data = json_decode(file_get_contents('php://input'), true);
 
-            // Validate required fields (only those that are NOT NULL in the database)
+            // Validate required fields
             if (
                 !isset($data['bookId']) || $data['bookId'] === '' ||
                 !isset($data['reasonText']) || trim($data['reasonText']) === '' ||
@@ -108,24 +122,36 @@ try {
                 echo json_encode(['error' => 'Missing required fields']);
                 break;
             }
-        
-            // Hardcode requester_id to 1
-            $requesterId = 1;
+
+            // Use authenticated user ID as requester_id
+            $requesterId = $authenticatedUserId;
+
+            // Determine owner_id from book_id
+            $ownerStmt = $pdo->prepare("SELECT user_id FROM livre WHERE book_id = ?");
+            $ownerStmt->execute([$data['bookId']]);
+            $ownerData = $ownerStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$ownerData) {
+                http_response_code(404);
+                echo json_encode(['error' => 'Book not found']);
+                break;
+            }
+            $ownerId = $ownerData['user_id'];
 
             // Set default values for optional fields
-            $type = $data['type'] ?? 'BORROW'; // Default to BORROW
-            $status = $data['status'] ?? 'PENDING'; // Default to PENDING
-            $datedeb = $data['datedeb'] ?? null; // Can be NULL
-            $durée = $data['durée'] ?? null; // Can be NULL
-        
+            $type = $data['type'] ?? 'BORROW';
+            $status = $data['status'] ?? 'PENDING';
+            $datedeb = $data['datedeb'] ?? null;
+            $durée = $data['durée'] ?? null;
+
             // Insert the swap request into the database
             $stmt = $pdo->prepare("
-                INSERT INTO requests (requester_id, book_id, type, status, datedeb, durée, reasonText) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO requests (requester_id, book_id, owner_id, type, status, datedeb, durée, reasonText) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
-                $requesterId, // Hardcoded to 1
+                $requesterId,
                 $data['bookId'],
+                $ownerId,
                 $type,
                 $status,
                 $datedeb,
@@ -134,8 +160,8 @@ try {
             ]);
 
             $requestId = $pdo->lastInsertId();
-        
-            // Send email to the owner (optional, suppress errors)
+
+            // Send email to the owner
             $subject = "New Swap Request for Your Book";
             $message = "Hello,\n\nA user has requested to swap your book (ID: {$data['bookId']}).\n\n";
             $message .= "Reason: {$data['reasonText']}\n";
@@ -143,9 +169,9 @@ try {
             $message .= "Duration: " . ($data['durée'] ?? 'Not specified') . " days\n\n";
             $message .= "Please log in to BookMate to review the request.\n\nBest regards,\nBookMate Team";
             $headers = "From: no-reply@bookmate.com\r\n";
-        
+
             $mailSent = @mail($data['ownerEmail'], $subject, $message, $headers);
-        
+
             // Fetch the newly created request to return in the response
             $fetchStmt = $pdo->prepare("SELECT * FROM requests WHERE request_id = ?");
             $fetchStmt->execute([$requestId]);
@@ -161,21 +187,18 @@ try {
         case 'PUT':
             $requestData = json_decode(file_get_contents("php://input"), true);
             
-            // Verify request ID and status
             if (empty($requestData['requestId']) || empty($requestData['status'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Request ID and status are required']);
                 break;
             }
             
-            // Validate status value
             if (!in_array($requestData['status'], ['PENDING', 'ACCEPTED', 'REJECTED'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Invalid status value']);
                 break;
             }
             
-            // Get current request data
             $checkRequest = $pdo->prepare("
                 SELECT r.*, l.user_id as book_owner_id, l.availability
                 FROM requests r
@@ -191,17 +214,20 @@ try {
                 break;
             }
             
-            // Update request status
+            // Verify the authenticated user is the owner or requester
+            if ($currentRequest['book_owner_id'] != $authenticatedUserId && $currentRequest['requester_id'] != $authenticatedUserId) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Unauthorized to update this request']);
+                break;
+            }
+            
             $stmt = $pdo->prepare("UPDATE requests SET status = ? WHERE request_id = ?");
             $stmt->execute([$requestData['status'], $requestData['requestId']]);
             
-            // If request is accepted, update book availability
             if ($requestData['status'] === 'ACCEPTED') {
-                // Update book availability
                 $updateBook = $pdo->prepare("UPDATE livre SET availability = 'borrowed' WHERE book_id = ?");
                 $updateBook->execute([$currentRequest['book_id']]);
                 
-                // Reject all other pending requests for this book
                 $rejectOthers = $pdo->prepare("
                     UPDATE requests 
                     SET status = 'REJECTED' 
@@ -219,7 +245,6 @@ try {
             break;
 
         case 'DELETE':
-            // Verify request ID
             if (empty($_GET['id'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Request ID is required']);
@@ -228,8 +253,7 @@ try {
             
             $requestId = $_GET['id'];
             
-            // Check if request exists and has pending status
-            $requestCheck = $pdo->prepare("SELECT status FROM requests WHERE request_id = ?");
+            $requestCheck = $pdo->prepare("SELECT status, requester_id FROM requests WHERE request_id = ?");
             $requestCheck->execute([$requestId]);
             $request = $requestCheck->fetch(PDO::FETCH_ASSOC);
             
@@ -239,13 +263,12 @@ try {
                 break;
             }
             
-            if ($request['status'] !== 'PENDING') {
+            if ($request['status'] !== 'PENDING' || $request['requester_id'] != $authenticatedUserId) {
                 http_response_code(400);
-                echo json_encode(['error' => 'Only pending requests can be canceled']);
+                echo json_encode(['error' => 'Only the requester can cancel a pending request']);
                 break;
             }
             
-            // Delete request
             $stmt = $pdo->prepare("DELETE FROM requests WHERE request_id = ?");
             $stmt->execute([$requestId]);
             

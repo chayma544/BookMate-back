@@ -26,30 +26,12 @@ header("X-XSS-Protection: 1; mode=block");
 // CORS for Angular frontend
 header("Access-Control-Allow-Origin: http://localhost:4200");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-Token");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
 header("Access-Control-Allow-Credentials: true");
 header("Access-Control-Max-Age: 86400");
 
 // Database connection
 require_once __DIR__ . '/../config/db.php';
-
-/**
- * Generate CSRF token
- */
-function generateCsrfToken(): string {
-    if (empty($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
-    return $_SESSION['csrf_token'];
-}
-
-/**
- * Verify CSRF token
- */
-function verifyCsrfToken(string $token): bool {
-    return isset($_SESSION['csrf_token']) && 
-           hash_equals($_SESSION['csrf_token'], $token);
-}
 
 /**
  * Sanitize input data
@@ -125,16 +107,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-// Authentication check
+// Authentication check for POST, PUT, DELETE only
 $method = $_SERVER['REQUEST_METHOD'];
 $current_user_id = $_SESSION['user_id'] ?? null;
 $current_user_role = $_SESSION['role'] ?? 'user';
 
-if ($method !== 'GET' && !$current_user_id) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Authentication required']);
-    exit();
-}
+// Debug session state - useful for troubleshooting
+error_log("Request method: $method, user_id: " . ($current_user_id ?? 'null'));
+error_log("Session data: " . json_encode($_SESSION));
+error_log("Content-Type: " . ($_SERVER['CONTENT_TYPE'] ?? 'not set'));
 
 // Apply rate limiting for authenticated users
 if ($current_user_id) {
@@ -159,7 +140,7 @@ try {
 
                 // Add image URL if exists
                 if (!empty($book['image_path'])) {
-                    $book['image_url'] = "/books/image/" . basename($book['image_path']);
+                    $book['URL'] = "/BookMate.git/back/api/image.php?path=" . basename($book['image_path']);
                 }
 
                 echo json_encode(['data' => $book]);
@@ -188,10 +169,33 @@ try {
                 // Add image URLs
                 foreach ($books as &$book) {
                     if (!empty($book['image_path'])) {
-                        $book['image_url'] = "/books/image/" . basename($book['image_path']);
+                        $book['URL'] = "/BookMate.git/back/api/image.php?path=" . basename($book['image_path']);
                     }
                 }
 
+                echo json_encode(['data' => $books]);
+                break;
+            }
+            
+            // Get user's books (my_books parameter)
+            if (isset($_GET['my_books']) && $_GET['my_books'] == '1') {
+                if (!$current_user_id) {
+                    http_response_code(401);
+                    echo json_encode(['error' => 'Authentication required']);
+                    break;
+                }
+                
+                $stmt = $pdo->prepare("SELECT * FROM livre WHERE user_id = ?");
+                $stmt->execute([$current_user_id]);
+                $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                
+                // Add image URLs
+                foreach ($books as &$book) {
+                    if (!empty($book['image_path'])) {
+                        $book['URL'] = "/BookMate.git/back/api/image.php?path=" . basename($book['image_path']);
+                    }
+                }
+                
                 echo json_encode(['data' => $books]);
                 break;
             }
@@ -214,7 +218,7 @@ try {
             
             foreach ($books as &$book) {
                 if (!empty($book['image_path'])) {
-                    $book['image_url'] = "/books/image/" . basename($book['image_path']);
+                    $book['URL'] = "/BookMate.git/back/api/image.php?path=" . basename($book['image_path']);
                 }
             }
 
@@ -222,27 +226,62 @@ try {
             break;
 
         case 'POST':
-            // Verify CSRF token
-            $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($_POST['csrf_token'] ?? '');
-            if (!verifyCsrfToken($csrfToken)) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Invalid CSRF token']);
-                break;
+            // Enhanced logging for debugging
+            error_log("POST request received");
+            error_log("Raw POST data: " . json_encode($_POST));
+            error_log("Files: " . json_encode($_FILES));
+            
+            // Get user ID - either from session or from input
+            $user_id = $current_user_id;
+            
+            // Check authentication
+            if (!$user_id) {
+                if (isset($_POST['user_id']) && is_numeric($_POST['user_id'])) {
+                    $user_id = (int)$_POST['user_id'];
+                    error_log("Using provided user_id from POST: $user_id");
+                } else {
+                    error_log("Authentication failed - no user_id in session or POST data");
+                    http_response_code(401);
+                    echo json_encode(['error' => 'Authentication required. Please login first.']);
+                    break;
+                }
             }
-
+            
             // Get and validate input
             $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
             $isJson = strpos($contentType, 'application/json') !== false;
             
             if ($isJson) {
                 $requestData = json_decode(file_get_contents('php://input'), true);
+                if ($requestData === null) {
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Invalid JSON data']);
+                    break;
+                }
                 $imageData = null;
+                
+                // Add user_id to the request data if not present
+                if (!isset($requestData['user_id'])) {
+                    $requestData['user_id'] = $user_id;
+                }
             } else {
                 $requestData = $_POST;
                 $imageData = $_FILES['image'] ?? null;
+                
+                // Add user_id to the request data if not present
+                if (!isset($requestData['user_id'])) {
+                    $requestData['user_id'] = $user_id;
+                }
+            }
+
+            if (empty($requestData)) {
+                http_response_code(400);
+                echo json_encode(['error' => 'No data provided']);
+                break;
             }
 
             $requestData = sanitizeInput($requestData);
+            error_log("Processed request data: " . json_encode($requestData));
 
             // Validate required fields
             $required = ['title', 'author_name'];
@@ -266,7 +305,7 @@ try {
                 $stmt->execute([
                     $requestData['title'],
                     $requestData['author_name'],
-                    $current_user_id
+                    $user_id
                 ]);
 
                 if ($stmt->rowCount() > 0) {
@@ -297,7 +336,7 @@ try {
                     $requestData['release_date'] ?? null,
                     $requestData['status'] ?? 'good',
                     $requestData['availability'] ?? 1,
-                    $current_user_id,
+                    $user_id,
                     $imagePath
                 ]);
 
@@ -310,7 +349,7 @@ try {
                 $book = $stmt->fetch(PDO::FETCH_ASSOC);
 
                 if (!empty($book['image_path'])) {
-                    $book['image_url'] = "/books/image/" . basename($book['image_path']);
+                    $book['URL'] = "/BookMate.git/back/api/image.php?path=" . basename($book['image_path']);
                 }
 
                 http_response_code(201);
@@ -329,14 +368,6 @@ try {
             break;
 
         case 'PUT':
-            // Verify CSRF token
-            $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-            if (!verifyCsrfToken($csrfToken)) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Invalid CSRF token']);
-                break;
-            }
-
             $requestData = json_decode(file_get_contents('php://input'), true);
             $requestData = sanitizeInput($requestData);
 
@@ -398,14 +429,6 @@ try {
             break;
 
         case 'DELETE':
-            // Verify CSRF token
-            $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-            if (!verifyCsrfToken($csrfToken)) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Invalid CSRF token']);
-                break;
-            }
-
             if (empty($_GET['id'])) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Book ID required']);

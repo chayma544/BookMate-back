@@ -8,11 +8,21 @@ header("Content-Type: application/json");
 header("Access-Control-Max-Age: 86400");
 
 // Ensure session is started after headers
+// Ensure session is started
 session_start();
-error_log('Session ID before login: ' . session_id());
-error_log('Cookies sent to login.php: ' . json_encode($_COOKIE));
-error_log('Request method: ' . $_SERVER['REQUEST_METHOD']);
-error_log('Request body: ' . file_get_contents('php://input'));
+
+// Set session data
+$_SESSION['user_id'] = $user['user_id'];
+
+// Set cookie with session ID for cross-origin requests
+setcookie('PHPSESSID', session_id(), [
+    'expires' => time() + 3600,  // Session expiration time
+    'path' => '/',               // Available for the entire domain
+    'domain' => '',              // Leave empty for local testing
+    'secure' => false,           // Set to true when using HTTPS
+    'httponly' => true,          // Prevent JavaScript access
+    'samesite' => 'None'         // Required for cross-origin with credentials
+]);
 
 // Handle preflight OPTIONS request
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
